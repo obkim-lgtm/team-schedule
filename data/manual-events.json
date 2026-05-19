@@ -1,3 +1,12 @@
 {
-  "events": []
+  "events": [
+    {
+      "id": "e_mos5lkdb",
+      "title": "채점모델/온보딩 배포",
+      "start": "2026-05-20",
+      "end": "",
+      "category": "clipo",
+      "note": ""
+    }
+  ]
 }
