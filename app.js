@@ -326,10 +326,16 @@ function renderAll() {
   renderSyncStatus();
 }
 
+// ---------- Modal helpers ----------
+function closeAllModals() {
+  $$('.modal-backdrop').forEach(m => { m.hidden = true; });
+}
+
 // ---------- Event modal ----------
 let editingEventId = null;
 
 function openEventModal(event, defaultDate) {
+  closeAllModals();
   editingEventId = event?.id || null;
   const isEdit = !!event;
   const isLocked = event?.source === 'notion';
@@ -409,6 +415,7 @@ function deleteEvent() {
 
 // ---------- Category modal ----------
 function openCategoryModal() {
+  closeAllModals();
   const editor = $('#category-editor');
   editor.innerHTML = '';
   state.categories.forEach((c, i) => editor.appendChild(buildCategoryRow(c, i)));
@@ -498,6 +505,7 @@ function openExportModal() {
     showToast('변경된 내용이 없어요');
     return;
   }
+  closeAllModals();
   const list = $('#export-list');
   list.innerHTML = '';
   const changed = [];
