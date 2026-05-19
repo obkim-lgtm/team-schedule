@@ -2,19 +2,33 @@
 
 ## 목적
 
-회사 주요 일정(배포·운영·기획·마케팅 등)을 한 화면에 모아 팀이 스크럼 없이도 흐름을 이해할 수 있게 함. 줄리 요청으로 시작.
+팀 내 주요 일정(배포·운영·박람회·기획 등)을 한 화면에 모아 줄리·구성원이 흐름을 이해할 수 있게 함.
 
 ## 사용자
 
-- **편집자**: 올립 (단일). 운영 일정, 메모, 카테고리 관리.
-- **열람자**: 줄리 + 사내 구성원. 내부망 전용.
+- **편집자**: 올립 한 명. 본인 PC에서 localhost로 작업.
+- **열람자**: 줄리 + 사내 구성원. Gitea Pages로 배포된 사이트(내부망 전용)에서 조회.
+
+## 아키텍처
+
+```
+[올립 PC]                                [줄리·팀원 PC]
+  node server.js                          internal-tool.pages.ddapp.io/team-schedule/
+  → localhost:5184                        ↑
+  → GET: 정적 서빙                        Gitea Pages (정적, 보기 전용)
+  → PUT /api/save/<file>:                  ↑
+     1. data/<file> 쓰기                   git push로 자동 재배포
+     2. background로 git commit + push
+```
+
+**핵심 아이디어**: 정적 사이트로 협업 편집을 하려고 PAT·CORS·CF Access를 우회하는 대신, 편집자(올립) PC에 작은 Node 서버를 띄워서 파일 직접 쓰기 + 자동 git push. 줄리 등 열람자는 백엔드 없는 정적 사이트만 보면 됨.
 
 ## 핵심 결정사항
 
-- **노션 배포 일정 → 사이트로 실시간 표시.** 노션 API 직접 호출은 CORS·토큰 노출 이슈. Gitea Actions가 cron으로 노션 API 호출 → `data/notion-events.json` 커밋 → 정적 사이트가 fetch. 동기화 빈도는 일 3회 (9·12·18 KST, off-peak 분 단위 오프셋).
-- **운영 일정·메모·카테고리 = 사이트 UI에서 편집.** 메모리에 변경사항 쌓이고 헤더 "변경사항 저장" 버튼으로 JSON ZIP 다운로드 → repo에 덮어쓰고 커밋. 백엔드 없이 정적 사이트로 유지하기 위한 절충.
-- **카테고리는 완전 자유.** 이름·색 모두 올립이 설정. 노션 카테고리 이름이 일치하면 색 매핑.
-- **노션 일정은 사이트에서 수정 불가.** 모달 열면 읽기 전용 + "노션에서 수정하세요" 안내.
+- **노션 연동 없음.** 처음엔 노션 "릴리즈 노트" DB를 자동 fetch하려 했으나, 그 DB는 과거 배포 기록용이지 일정 캘린더가 아니라 맥락 부적합. 현재는 모든 일정 수동 입력. 향후 노션 자동화 필요해지면 별도로 추가.
+- **편집은 올립이만, localhost에서.** 줄리는 보기 전용. 배포된 사이트는 PUT 엔드포인트가 없어서 (server.js가 아니라 Gitea Pages가 서빙) 편집 불가.
+- **자동 push 1.5초 디바운스.** 메모 입력 같이 짧은 간격으로 저장이 일어나도 한 번의 commit·push로 묶임.
+- **카테고리 완전 자유.** 이름·색 모두 올립이 설정. 기본 5개(HIAI/CLIPO/운영/마케팅/기획).
 
 ## 배포
 
@@ -22,33 +36,18 @@
 - 공개 URL: `https://internal-tool.pages.ddapp.io/team-schedule/` (CF Access 뒤, 내부망 전용)
 - 활성 브랜치: `pages` (Gitea Pages가 직접 서빙)
 
-## 노션 연동 사양
-
-- **Integration**: `team-schedule-sync` (Internal, Read content)
-- **대상 DB**: 배포·일정 캘린더 DB
-- **필요 속성**:
-  - 제목 (Title 타입) — 자동탐지
-  - 날짜 (Date 타입) — 기본 이름 `날짜`. 다르면 `vars.NOTION_DATE_PROP`
-  - 카테고리 (Select / Multi-select / Status 타입) — 기본 이름 `카테고리`. 다르면 `vars.NOTION_CATEGORY_PROP`
-- **시크릿** (Gitea repo Settings → Actions → Secrets):
-  - `NOTION_TOKEN`: Integration Secret (secret_...)
-  - `NOTION_DATABASE_ID`: 32자리 hex
-- **변수** (선택, vars):
-  - `NOTION_DATE_PROP`, `NOTION_CATEGORY_PROP`, `NOTION_TITLE_PROP`
-
 ## 데이터 구조
 
 ```
 data/
-├── notion-events.json   # ⚙️ Gitea Actions 자동 갱신 (편집 금지)
-├── manual-events.json   # ✍️ 사이트에서 편집 → ZIP 다운로드 → 덮어쓰기
-├── memos.json           # ✍️ 월별 메모. 키 = "YYYY-MM"
-└── categories.json      # ✍️ 카테고리 정의 (이름+색)
+├── manual-events.json   # 일정 목록 (server가 PUT으로 갱신)
+├── memos.json           # 월별 메모 (키 = "YYYY-MM")
+└── categories.json      # 카테고리 정의 (이름+색)
 ```
 
 ## TODO / 향후
 
-- [ ] 헤더 "지금 동기화" 버튼 (Gitea Actions API workflow_dispatch 호출, PAT 입력)
-- [ ] 일정 색상 외에 아이콘도 카테고리당 1개 지정 가능하게
+- [ ] 노션 캘린더 자동 연동 (별도 노션 DB 만들고 cron으로 fetch — 현재는 모든 일정 수동)
 - [ ] 주간 뷰 토글
-- [ ] 노션 DB 다중 연동 (예: 운영팀 캘린더, 마케팅 캘린더 분리)
+- [ ] 일정에 URL 첨부 (노션 페이지, PR 링크 등)
+- [ ] 검색·필터링

@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>팀 일정 · CLIPO</title>
+  <title>팀 일정</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
-  <link rel="stylesheet" href="styles.css?v=1" />
+  <link rel="stylesheet" href="styles.css?v=2" />
 </head>
 <body>
   <header class="topbar">
@@ -23,13 +23,9 @@
       </div>
     </div>
     <div class="topbar-right">
-      <div class="save-status" id="save-status" title="자동 저장 상태">
+      <div class="save-status idle" id="save-status" title="자동 저장 상태">
         <span class="save-dot"></span>
-        <span class="save-text">변경 없음</span>
-      </div>
-      <div class="sync-status" id="sync-status" title="노션 동기화 상태">
-        <span class="sync-dot"></span>
-        <span class="sync-text">노션 동기화 확인 중…</span>
+        <span class="save-text">대기</span>
       </div>
       <button class="outline-btn" id="manage-categories-btn">카테고리</button>
       <button class="primary-btn" id="add-event-btn">+ 일정 추가</button>
@@ -90,7 +86,7 @@
       <div class="modal-body">
         <label class="field">
           <span class="field-label">제목</span>
-          <input type="text" id="event-title" placeholder="예: CLIPO 창체 입력 v1 배포" autocomplete="off" />
+          <input type="text" id="event-title" placeholder="예: v2.21 배포" autocomplete="off" />
         </label>
         <div class="field-row">
           <label class="field">
@@ -110,10 +106,6 @@
           <span class="field-label">메모 <span class="field-sub">(선택)</span></span>
           <textarea id="event-note" rows="3" placeholder="세부 사항, 링크, 담당자 등"></textarea>
         </label>
-        <div class="modal-meta" id="event-modal-meta" hidden>
-          <span class="meta-pill" id="event-source-pill">노션 동기화</span>
-          <span class="meta-help">노션에서 온 일정은 노션에서만 수정할 수 있어요.</span>
-        </div>
       </div>
       <div class="modal-footer">
         <button class="text-btn danger" id="event-delete" hidden>삭제</button>
@@ -133,7 +125,7 @@
         <button class="icon-btn" id="category-modal-close" aria-label="닫기">×</button>
       </div>
       <div class="modal-body">
-        <p class="modal-desc">이름과 색을 자유롭게 정하세요. 노션에서 가져온 일정의 카테고리 이름이 여기 항목과 일치하면 해당 색으로 표시됩니다.</p>
+        <p class="modal-desc">이름과 색을 자유롭게 정하세요.</p>
         <div class="category-editor" id="category-editor"></div>
         <button class="outline-btn full" id="category-add">+ 카테고리 추가</button>
       </div>
@@ -146,32 +138,8 @@
     </div>
   </div>
 
-  <!-- PAT 입력 모달 (최초 1회) -->
-  <div class="modal-backdrop" id="pat-modal" hidden>
-    <div class="modal" role="dialog" aria-modal="true">
-      <div class="modal-header">
-        <h2 class="modal-title">Gitea PAT 입력</h2>
-        <button class="icon-btn" id="pat-modal-close" aria-label="닫기">×</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-desc">처음 1회만 입력하면 이후 자동 저장돼요. <code>write:repository</code> 권한이 있는 PAT가 필요해요. 발급: Gitea 우상단 프로필 → Settings → Applications → Generate New Token.</p>
-        <label class="field">
-          <span class="field-label">Personal Access Token</span>
-          <input type="password" id="pat-input" placeholder="abcdef0123456789..." autocomplete="off" />
-        </label>
-        <p class="modal-desc" style="font-size:12px;color:var(--text-3);">이 토큰은 이 브라우저의 localStorage에만 저장됩니다. 다른 기기에서 편집하려면 거기서도 입력해야 해요.</p>
-      </div>
-      <div class="modal-footer">
-        <div class="modal-footer-right">
-          <button class="outline-btn" id="pat-cancel">취소</button>
-          <button class="primary-btn" id="pat-save">저장</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <div class="toast" id="toast" hidden></div>
 
-  <script src="app.js?v=1"></script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>

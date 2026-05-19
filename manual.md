@@ -2,95 +2,62 @@
 
 ## URL
 
-- **사용자 보는 URL**: https://internal-tool.pages.ddapp.io/team-schedule/ (내부망 전용)
+- **올립 작업용**: http://localhost:5184 (편집 가능)
+- **줄리·팀원 보기용**: https://internal-tool.pages.ddapp.io/team-schedule/ (내부망 전용, 보기 전용)
 - **Gitea repo**: http://192.168.50.201:3000/Internal-Tool/team-schedule
-- **로컬 작업 경로**: `F:\내 드라이브\Claude\_team_schedule\`
+- **로컬 경로**: `F:\내 드라이브\Claude\_team_schedule\`
 
-## 일정·메모 편집 (올립 + 권한 있는 사람)
+## 작업 시작 — 매일
 
-### 첫 1회: PAT 입력
-1. 사이트 접속 → 운영 일정·메모를 처음 수정하려고 하면 **Gitea PAT 입력** 모달이 뜸
-2. Gitea PAT 발급 → 토큰 붙여넣기 → 저장
-3. localStorage에 저장돼서 이후 자동 사용
+Claude Code에서:
+```
+preview_start('team-schedule')
+```
 
-### PAT 발급 방법
-1. http://192.168.50.201:3000/user/settings/applications
-2. Generate New Token
-3. Name: `team-schedule-edit` (또는 원하는 이름)
-4. Scopes: **write:repository** 체크 필수
-5. Generate → 토큰 복사 (이 화면 닫으면 다시 못 봄)
+오른쪽 패널 또는 브라우저에서 http://localhost:5184 접속 → 끝.
 
-### 이후 사용
-- **일정 추가**: 날짜 클릭 또는 [+ 일정 추가] → 저장 → 자동 커밋·push (약 30초 후 사이트 반영)
-- **일정 수정/삭제**: 캘린더에서 해당 칩 클릭 → 수정 또는 삭제
-- **메모 작성**: 우측 메모 영역에 자유 기재 → 1.5초 멈추면 자동 저장
-- **카테고리 관리**: 헤더 [카테고리] 버튼 → 이름·색 편집 → 저장
+## 일정·메모 편집
 
-### 저장 상태 인디케이터
-헤더 좌측에 표시:
+- **일정 추가**: 날짜 클릭 또는 [+ 일정 추가] → 폼 입력 → 저장
+- **일정 수정/삭제**: 캘린더에서 해당 칩 클릭 → 수정·삭제
+- **메모 작성**: 우측 메모 영역에 자유 기재 (1.5초 멈추면 자동 저장)
+- **카테고리 관리**: 헤더 [카테고리] → 이름·색 자유 설정
+
+저장하면 즉시 `data/*.json`에 기록되고, 1.5초 후 자동으로 git commit·push. 약 30초 후 줄리 사이트에 반영.
+
+## 저장 상태 표시
+
+헤더에 표시:
 
 | 표시 | 의미 |
 |---|---|
-| `변경 없음` | 대기 중 |
+| `대기` | 변경 없음 |
 | `입력 중…` | 메모 입력 중 (debounce 대기) |
-| `저장 중…` | Gitea API 호출 중 |
+| `저장 중…` | 서버에 PUT 호출 중 |
 | `저장됨` | 완료 (2.5초 후 사라짐) |
-| `PAT 미설정` | 토큰 없음 — 편집 시도하면 입력 모달 |
-| `PAT 오류` | 토큰 유효하지 않음 — 클릭해서 재입력 |
-| `저장 실패` | 네트워크/권한 등 — 클릭해서 PAT 재입력 |
+| `저장 실패` | 서버 다운 또는 git push 실패 |
 
-## 노션 동기화 (배포 일정)
-
-노션 "릴리즈 노트" DB → `data/notion-events.json` 자동 갱신.
-
-### 자동
-- 매일 09:00 / 12:00 / 18:00 KST (Gitea Actions cron)
-- 결과: `data/notion-events.json` 자동 커밋
-
-### 수동
-- Gitea repo → **Actions** 탭 → **Notion → notion-events.json** 워크플로 → **Run workflow**
-
-## 노션과 사이트 색 매핑
-
-- 노션 DB의 `프로젝트` Select 값 = 사이트 카테고리 이름 일치 → 같은 색
-- 현재: `HIAI` 보라(#7E44FB), `CLIPO` 파랑(#416BFF)
-- 일치 안 하면 회색 표시 — 사이트 카테고리 수정으로 맞추세요
-
-## 초기 세팅 (이미 완료된 항목)
-
-### 노션 Integration
-- 이름: `team-schedule-sync`
-- 워크스페이스: Datadriven
-- 권한: Read content
-- 연결된 DB: 릴리즈 노트 (`26f17e5c8cf180f7ac6ef4650e89e859`)
-
-### Gitea Secrets
-repo Settings → Actions → Secrets:
-- `NOTION_TOKEN`: Notion Integration Secret
-- `NOTION_DATABASE_ID`: `26f17e5c8cf180f7ac6ef4650e89e859`
-
-### Gitea Variables (선택)
-- `NOTION_DATE_PROP`: 기본 `배포일`
-- `NOTION_CATEGORY_PROP`: 기본 `프로젝트`
-- `NOTION_DATE_FROM`: 기본 `2026-05-01`
-
-## 로컬 미리보기
-
-```
-preview_start('team-schedule')  → http://localhost:5184
-```
+git push가 실패해도 파일은 로컬에 저장됨. 서버 로그(콘솔)에서 원인 확인 가능. 
 
 ## 트러블슈팅
 
 | 증상 | 원인·해결 |
 |---|---|
-| "노션 동기화 실패" | Gitea Actions 로그 확인. 토큰 만료, DB ID 변경, Integration이 DB에 연결 안 됨 |
-| 노션 일정 안 보임 | (1) DB 속성 이름 확인 (2) 해당 row 날짜 비어있지 않은지 (3) 배포일 < 2026-05-01인지 (필터됨) |
-| 사이트 안 뜸 | Gitea Pages 활성화 확인. repo Settings → Pages → Branch: `pages` |
-| 저장 실패 | save-status 칩 클릭 → PAT 재입력. PAT에 `write:repository` 권한 있는지 확인 |
-| 저장은 됐는데 사이트에 반영 안 됨 | Gitea Pages 재배포(~30초) 대기. 새로고침 |
+| "저장 실패" 빨간 칩 | server.js 안 켜져 있음. `preview_start('team-schedule')` 다시 실행 |
+| 줄리 사이트가 안 바뀜 | (1) git push 성공했는지 서버 로그 확인 (2) Gitea Pages 활성화 확인 (Settings → Pages → Branch: `pages`) (3) 30초~1분 대기 |
+| `fatal: bad object refs/desktop.ini` | Google Drive 동기화가 `.git/refs/`에 desktop.ini 박은 거. `find .git -name desktop.ini -delete` 실행 |
+| git push가 자꾸 rejected | remote에 다른 커밋 있음. `git pull --rebase` 후 다시 시도 |
 
-## 관련
+## server.js 동작 요약
 
-- 허브 카드: https://obkim-lgtm.github.io/hub/ (Internal App 섹션)
-- 참고 사례: `_dd_att` (DD_Attendance) — 같은 패턴(localStorage PAT + Gitea API)
+- 포트 5184에서 정적 파일 서빙 (index.html, app.js, styles.css, data/*.json)
+- PUT `/api/save/{categories,manual-events,memos}.json` — body의 JSON을 그대로 받아 파일에 쓰기
+- 파일 쓰기 직후 응답 즉시 반환 (push는 background)
+- 1.5초 디바운스 후 `git add → git commit → git push`. 여러 저장이 연달아 일어나도 한 번의 commit으로 묶임
+- 변경 없으면 commit skip (조용히 넘어감)
+
+## 줄리에게 공유
+
+1. 처음 1회만 안내: https://internal-tool.pages.ddapp.io/team-schedule/ 북마크
+2. 이후 올립이 편집 → 자동 반영
+3. 줄리는 페이지 새로고침만 하면 최신 상태 보임 (캐시 때문에 안 보이면 Ctrl+F5)

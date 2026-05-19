@@ -1,30 +1,22 @@
 // =====================================================================
 // 팀 일정 (team-schedule)
-// 정적 사이트. data/ 폴더의 JSON을 fetch해서 캘린더 렌더.
-// 편집은 Gitea Contents API로 직접 커밋 (PAT 1회 입력 → localStorage).
+// 편집 → server.js의 PUT /api/save/<file> → 파일 저장 + 자동 git push
+// 노션 연동 없음. 모든 일정은 수동 등록.
 // =====================================================================
 
 const DATA_FILES = {
   categories:   'data/categories.json',
   manualEvents: 'data/manual-events.json',
   memos:        'data/memos.json',
-  notionEvents: 'data/notion-events.json',
 };
-
-const GITEA_BASE = 'https://gitea.ddapp.io';
-const GITEA_REPO = 'Internal-Tool/team-schedule';
-const GITEA_BRANCH = 'pages';
-const PAT_KEY = 'team_schedule_gitea_pat';
+const SAVE_ENDPOINT = '/api/save/';
 const MEMO_DEBOUNCE_MS = 1500;
 
 const state = {
   current: new Date(),
   categories: [],
-  manualEvents: [],
-  notionEvents: [],
+  events: [],
   memos: {},
-  syncMeta: null,
-  fileSha: { categories: null, manualEvents: null, memos: null },  // Gitea API용 sha 캐시
 };
 
 const DEFAULT_CATEGORIES = [
@@ -48,7 +40,7 @@ const parseDate = (s) => {
 };
 const sameDay = (a, b) => a && b && fmtDate(a) === fmtDate(b);
 const todayISO = () => fmtDate(new Date());
-const newId = () => 'm_' + Math.random().toString(36).slice(2, 10);
+const newId = () => 'e_' + Math.random().toString(36).slice(2, 10);
 
 function showToast(msg, ms = 1800) {
   const t = $('#toast');
@@ -64,177 +56,43 @@ function findCategory(key) {
       || { key: 'default', name: '기타', color: '#9CA3AF' };
 }
 
-// ---------- Gitea API ----------
-function getPAT() {
-  return localStorage.getItem(PAT_KEY);
-}
-
-function promptForPAT() {
-  return new Promise((resolve) => {
-    closeAllModals();
-    $('#pat-input').value = '';
-    $('#pat-modal').hidden = false;
-    setTimeout(() => $('#pat-input').focus(), 50);
-
-    const cleanup = () => {
-      $('#pat-save').onclick = null;
-      $('#pat-cancel').onclick = null;
-      $('#pat-modal-close').onclick = null;
-      $('#pat-input').onkeydown = null;
-    };
-    const onSave = () => {
-      const val = $('#pat-input').value.trim();
-      if (!val) { showToast('토큰을 입력해주세요'); return; }
-      localStorage.setItem(PAT_KEY, val);
-      $('#pat-modal').hidden = true;
-      cleanup();
-      resolve(val);
-    };
-    const onCancel = () => {
-      $('#pat-modal').hidden = true;
-      cleanup();
-      resolve(null);
-    };
-    $('#pat-save').onclick = onSave;
-    $('#pat-cancel').onclick = onCancel;
-    $('#pat-modal-close').onclick = onCancel;
-    $('#pat-input').onkeydown = (e) => {
-      if (e.key === 'Enter') onSave();
-      if (e.key === 'Escape') onCancel();
-    };
-  });
-}
-
-async function ensurePAT() {
-  let token = getPAT();
-  if (!token) token = await promptForPAT();
-  return token;
-}
-
-function utf8ToBase64(str) {
-  return btoa(unescape(encodeURIComponent(str)));
-}
-
-async function giteaGetSha(filepath) {
-  const token = getPAT();
-  if (!token) return null;
-  try {
-    const res = await fetch(
-      `${GITEA_BASE}/api/v1/repos/${GITEA_REPO}/contents/${filepath}?ref=${GITEA_BRANCH}`,
-      { headers: { 'Authorization': `token ${token}` } }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.sha;
-  } catch (e) {
-    console.warn('[gitea sha fail]', e);
-    return null;
-  }
-}
-
-async function giteaPutFile(filepath, content, commitMsg, shaKey) {
-  const token = await ensurePAT();
-  if (!token) throw new Error('NO_PAT');
-
-  let sha = state.fileSha[shaKey];
-  if (!sha) sha = await giteaGetSha(filepath);
-
-  const body = {
-    content: utf8ToBase64(content),
-    message: commitMsg,
-    branch: GITEA_BRANCH,
-  };
-  if (sha) body.sha = sha;
-
-  const res = await fetch(
-    `${GITEA_BASE}/api/v1/repos/${GITEA_REPO}/contents/${filepath}`,
-    {
-      method: 'PUT',
-      headers: {
-        'Authorization': `token ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    }
-  );
-
-  if (res.status === 401 || res.status === 403) {
-    localStorage.removeItem(PAT_KEY);
-    throw new Error('AUTH_FAIL');
-  }
-  if (res.status === 409 || res.status === 422) {
-    // sha 충돌 — 다시 fetch 후 재시도 1회
-    const fresh = await giteaGetSha(filepath);
-    if (fresh && fresh !== sha) {
-      state.fileSha[shaKey] = fresh;
-      return giteaPutFile(filepath, content, commitMsg, shaKey);
-    }
-    throw new Error(`CONFLICT: ${res.status}`);
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status}: ${text}`);
-  }
-
-  const result = await res.json();
-  state.fileSha[shaKey] = result.content?.sha || null;
-  return result;
-}
-
-// ---------- Save status indicator ----------
-let saveQueue = Promise.resolve();
-
+// ---------- Save status ----------
 function setSaveStatus(kind, text) {
   const el = $('#save-status');
-  el.className = 'save-status ' + kind;  // kind: idle | saving | saved | error
+  el.className = 'save-status ' + kind;
   el.querySelector('.save-text').textContent = text;
 }
 
-async function saveData(shaKey, filepath, payload, label) {
-  // 직렬화: 동시 저장이 sha 충돌 안 일으키게 큐로 순차 실행
-  saveQueue = saveQueue.then(async () => {
-    setSaveStatus('saving', '저장 중…');
-    try {
-      const content = JSON.stringify(payload, null, 2) + '\n';
-      await giteaPutFile(filepath, content, `갱신: ${label}`, shaKey);
-      setSaveStatus('saved', '저장됨');
-      setTimeout(() => {
-        if ($('#save-status').classList.contains('saved')) {
-          setSaveStatus('idle', '변경 없음');
-        }
-      }, 2500);
-    } catch (e) {
-      console.error('[save fail]', e);
-      if (e.message === 'NO_PAT') {
-        setSaveStatus('error', 'PAT 입력 필요');
-        showToast('PAT 입력이 취소돼서 저장 못 했어요');
-      } else if (e.message === 'AUTH_FAIL') {
-        setSaveStatus('error', 'PAT 오류');
-        showToast('토큰이 유효하지 않아요. 다시 시도해주세요');
-      } else {
-        setSaveStatus('error', '저장 실패');
-        showToast(`저장 실패: ${e.message}`);
-      }
+let saveTimers = {};
+async function postSave(filename, payload) {
+  setSaveStatus('saving', '저장 중…');
+  try {
+    const res = await fetch(SAVE_ENDPOINT + filename, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text}`);
     }
-  });
-  return saveQueue;
+    setSaveStatus('saved', '저장됨');
+    clearTimeout(saveTimers._reset);
+    saveTimers._reset = setTimeout(() => {
+      if ($('#save-status').classList.contains('saved')) {
+        setSaveStatus('idle', '대기');
+      }
+    }, 2500);
+  } catch (e) {
+    console.error('[save fail]', e);
+    setSaveStatus('error', '저장 실패');
+    showToast(`저장 실패: ${e.message}`);
+  }
 }
 
-function saveManualEvents() {
-  return saveData('manualEvents', DATA_FILES.manualEvents,
-    { events: state.manualEvents },
-    `운영 일정 (${state.manualEvents.length}개)`);
-}
-function saveCategoriesFile() {
-  return saveData('categories', DATA_FILES.categories,
-    { categories: state.categories },
-    `카테고리 (${state.categories.length}개)`);
-}
-function saveMemos() {
-  return saveData('memos', DATA_FILES.memos,
-    { memos: state.memos },
-    `메모 (${fmtMonth(state.current)})`);
-}
+function saveEventsFile()     { return postSave('manual-events.json', { events: state.events }); }
+function saveCategoriesFile() { return postSave('categories.json',    { categories: state.categories }); }
+function saveMemosFile()      { return postSave('memos.json',         { memos: state.memos }); }
 
 // ---------- Data loading ----------
 async function loadJSON(path, fallback) {
@@ -249,48 +107,35 @@ async function loadJSON(path, fallback) {
 }
 
 async function loadAll() {
-  const [cats, manual, memos, notion] = await Promise.all([
-    loadJSON(DATA_FILES.categories, { categories: DEFAULT_CATEGORIES }),
+  const [cats, manual, memos] = await Promise.all([
+    loadJSON(DATA_FILES.categories,   { categories: DEFAULT_CATEGORIES }),
     loadJSON(DATA_FILES.manualEvents, { events: [] }),
-    loadJSON(DATA_FILES.memos, { memos: {} }),
-    loadJSON(DATA_FILES.notionEvents, { events: [], syncedAt: null, ok: false }),
+    loadJSON(DATA_FILES.memos,        { memos: {} }),
   ]);
-
   state.categories = cats.categories || DEFAULT_CATEGORIES;
-  state.manualEvents = manual.events || [];
+  state.events = manual.events || [];
   state.memos = memos.memos || {};
-  state.notionEvents = (notion.events || []).map(e => ({ ...e, source: 'notion' }));
-  state.syncMeta = { syncedAt: notion.syncedAt, ok: notion.ok !== false, error: notion.error };
 }
 
 // ---------- Events ----------
-function getAllEvents() {
-  return [
-    ...state.notionEvents.map(e => ({ ...e, source: 'notion', locked: true })),
-    ...state.manualEvents.map(e => ({ ...e, source: 'manual', locked: false })),
-  ];
-}
-
 function eventsOnDay(date) {
   const iso = fmtDate(date);
-  return getAllEvents().filter(e => {
-    const start = e.start;
+  return state.events.filter(e => {
     const end = e.end || e.start;
-    return iso >= start && iso <= end;
+    return iso >= e.start && iso <= end;
   });
 }
 
 function eventsInMonth(year, month) {
   const first = fmtDate(new Date(year, month, 1));
   const last = fmtDate(new Date(year, month + 1, 0));
-  return getAllEvents().filter(e => {
-    const start = e.start;
+  return state.events.filter(e => {
     const end = e.end || e.start;
-    return !(end < first || start > last);
+    return !(end < first || e.start > last);
   }).sort((a, b) => a.start.localeCompare(b.start));
 }
 
-// ---------- Calendar rendering ----------
+// ---------- Calendar ----------
 function renderCalendar() {
   const grid = $('#calendar-grid');
   grid.innerHTML = '';
@@ -305,25 +150,14 @@ function renderCalendar() {
   $('#month-label').textContent = `${year}년 ${month + 1}월`;
 
   const cells = [];
-  for (let i = firstDow - 1; i >= 0; i--) {
-    cells.push({ year, month: month - 1, day: daysInPrev - i, otherMonth: true });
-  }
-  for (let d = 1; d <= daysInMonth; d++) {
-    cells.push({ year, month, day: d, otherMonth: false });
-  }
+  for (let i = firstDow - 1; i >= 0; i--) cells.push({ year, month: month - 1, day: daysInPrev - i, otherMonth: true });
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ year, month, day: d, otherMonth: false });
   const trailing = (7 - (cells.length % 7)) % 7;
-  for (let d = 1; d <= trailing; d++) {
-    cells.push({ year, month: month + 1, day: d, otherMonth: true });
-  }
+  for (let d = 1; d <= trailing; d++) cells.push({ year, month: month + 1, day: d, otherMonth: true });
   while (cells.length < 42) {
     const last = cells[cells.length - 1];
     const nextDate = new Date(last.year, last.month, last.day + 1);
-    cells.push({
-      year: nextDate.getFullYear(),
-      month: nextDate.getMonth(),
-      day: nextDate.getDate(),
-      otherMonth: true,
-    });
+    cells.push({ year: nextDate.getFullYear(), month: nextDate.getMonth(), day: nextDate.getDate(), otherMonth: true });
   }
 
   const today = new Date();
@@ -350,15 +184,11 @@ function renderCalendar() {
     evts.slice(0, maxShow).forEach(e => {
       const chip = document.createElement('div');
       chip.className = 'event-chip';
-      if (e.locked) chip.classList.add('locked');
       const cat = findCategory(e.category);
       chip.style.background = cat.color + '22';
       chip.style.borderLeftColor = cat.color;
       chip.textContent = e.title;
-      chip.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        openEventModal(e);
-      });
+      chip.addEventListener('click', (ev) => { ev.stopPropagation(); openEventModal(e); });
       chips.appendChild(chip);
     });
     if (evts.length > maxShow) {
@@ -368,11 +198,7 @@ function renderCalendar() {
       chips.appendChild(more);
     }
     cell.appendChild(chips);
-
-    cell.addEventListener('click', () => {
-      openEventModal(null, fmtDate(date));
-    });
-
+    cell.addEventListener('click', () => openEventModal(null, fmtDate(date)));
     grid.appendChild(cell);
   });
 }
@@ -418,15 +244,6 @@ function renderEventList() {
     item.appendChild(date);
     item.appendChild(dot);
     item.appendChild(title);
-
-    if (e.source === 'notion') {
-      const lock = document.createElement('span');
-      lock.className = 'event-list-locked';
-      lock.textContent = '🔗';
-      lock.title = '노션 동기화';
-      item.appendChild(lock);
-    }
-
     item.addEventListener('click', () => openEventModal(e));
     list.appendChild(item);
   });
@@ -449,62 +266,26 @@ function renderLegend() {
   });
 }
 
-function renderSyncStatus() {
-  const el = $('#sync-status');
-  const text = el.querySelector('.sync-text');
-  el.classList.remove('ok', 'warn', 'err');
-  const meta = state.syncMeta || {};
-  if (!meta.syncedAt) {
-    el.classList.add('warn');
-    text.textContent = '노션 미동기화';
-    el.title = '아직 노션 동기화가 한 번도 수행되지 않았습니다.';
-    return;
-  }
-  const at = new Date(meta.syncedAt);
-  const ago = Math.round((Date.now() - at.getTime()) / 60000);
-  let agoStr;
-  if (ago < 1) agoStr = '방금 전';
-  else if (ago < 60) agoStr = `${ago}분 전`;
-  else if (ago < 60 * 24) agoStr = `${Math.round(ago / 60)}시간 전`;
-  else agoStr = `${Math.round(ago / 60 / 24)}일 전`;
-
-  if (meta.ok === false) {
-    el.classList.add('err');
-    text.textContent = `노션 동기화 실패 · ${agoStr}`;
-    el.title = meta.error || '동기화 실패';
-  } else {
-    el.classList.add('ok');
-    text.textContent = `노션 ${agoStr}`;
-    el.title = `마지막 동기화: ${at.toLocaleString('ko-KR')}`;
-  }
-}
-
 function renderAll() {
   renderCalendar();
   renderMemo();
   renderEventList();
   renderLegend();
-  renderSyncStatus();
 }
 
-// ---------- Modal helpers ----------
+// ---------- Modals ----------
 function closeAllModals() {
   $$('.modal-backdrop').forEach(m => { m.hidden = true; });
 }
 
-// ---------- Event modal ----------
 let editingEventId = null;
 
 function openEventModal(event, defaultDate) {
   closeAllModals();
   editingEventId = event?.id || null;
   const isEdit = !!event;
-  const isLocked = event?.source === 'notion';
 
-  $('#event-modal-title').textContent = isEdit
-    ? (isLocked ? '노션 일정 (읽기 전용)' : '일정 수정')
-    : '일정 추가';
-
+  $('#event-modal-title').textContent = isEdit ? '일정 수정' : '일정 추가';
   $('#event-title').value = event?.title || '';
   $('#event-start').value = event?.start || defaultDate || todayISO();
   $('#event-end').value = event?.end || '';
@@ -520,16 +301,9 @@ function openEventModal(event, defaultDate) {
   });
   sel.value = event?.category || state.categories[0]?.key || '';
 
-  ['#event-title', '#event-start', '#event-end', '#event-category', '#event-note'].forEach(s => {
-    $(s).disabled = isLocked;
-  });
-
-  $('#event-delete').hidden = !isEdit || isLocked;
-  $('#event-save').hidden = isLocked;
-  $('#event-modal-meta').hidden = !isLocked;
-
+  $('#event-delete').hidden = !isEdit;
   $('#event-modal').hidden = false;
-  if (!isLocked) setTimeout(() => $('#event-title').focus(), 50);
+  setTimeout(() => $('#event-title').focus(), 50);
 }
 
 function closeEventModal() {
@@ -549,25 +323,23 @@ async function handleSaveEvent() {
   if (end && end < start) { showToast('종료일이 시작일보다 빠릅니다'); return; }
 
   if (editingEventId) {
-    const idx = state.manualEvents.findIndex(e => e.id === editingEventId);
-    if (idx >= 0) {
-      state.manualEvents[idx] = { id: editingEventId, title, start, end, category, note };
-    }
+    const idx = state.events.findIndex(e => e.id === editingEventId);
+    if (idx >= 0) state.events[idx] = { id: editingEventId, title, start, end, category, note };
   } else {
-    state.manualEvents.push({ id: newId(), title, start, end, category, note });
+    state.events.push({ id: newId(), title, start, end, category, note });
   }
   closeEventModal();
   renderAll();
-  await saveManualEvents();
+  saveEventsFile();
 }
 
 async function handleDeleteEvent() {
   if (!editingEventId) return;
   if (!confirm('이 일정을 삭제할까요?')) return;
-  state.manualEvents = state.manualEvents.filter(e => e.id !== editingEventId);
+  state.events = state.events.filter(e => e.id !== editingEventId);
   closeEventModal();
   renderAll();
-  await saveManualEvents();
+  saveEventsFile();
 }
 
 // ---------- Category modal ----------
@@ -579,17 +351,14 @@ function openCategoryModal() {
   $('#category-modal').hidden = false;
 }
 
-function buildCategoryRow(cat, idx) {
+function buildCategoryRow(cat) {
   const row = document.createElement('div');
   row.className = 'category-row';
-  row.dataset.idx = idx;
 
   const color = document.createElement('input');
   color.type = 'color';
   color.value = cat.color;
-  color.addEventListener('input', (e) => {
-    row.querySelector('.hex').value = e.target.value.toUpperCase();
-  });
+  color.addEventListener('input', (e) => { row.querySelector('.hex').value = e.target.value.toUpperCase(); });
 
   const name = document.createElement('input');
   name.type = 'text';
@@ -640,20 +409,20 @@ async function handleSaveCategories() {
   state.categories = next;
   $('#category-modal').hidden = true;
   renderAll();
-  await saveCategoriesFile();
+  saveCategoriesFile();
 }
 
-// ---------- Memo (debounced auto-save) ----------
+// ---------- Memo (debounced) ----------
 let memoTimer = null;
 function onMemoInput(e) {
   const key = fmtMonth(state.current);
   state.memos[key] = e.target.value;
   setSaveStatus('saving', '입력 중…');
   clearTimeout(memoTimer);
-  memoTimer = setTimeout(() => { saveMemos(); }, MEMO_DEBOUNCE_MS);
+  memoTimer = setTimeout(() => { saveMemosFile(); }, MEMO_DEBOUNCE_MS);
 }
 
-// ---------- Event wiring ----------
+// ---------- Wiring ----------
 function bind() {
   $('#prev-month').addEventListener('click', () => {
     state.current = new Date(state.current.getFullYear(), state.current.getMonth() - 1, 1);
@@ -663,37 +432,22 @@ function bind() {
     state.current = new Date(state.current.getFullYear(), state.current.getMonth() + 1, 1);
     renderAll();
   });
-  $('#today-btn').addEventListener('click', () => {
-    state.current = new Date();
-    renderAll();
-  });
-  $('#month-label').addEventListener('click', () => {
-    state.current = new Date();
-    renderAll();
-  });
+  $('#today-btn').addEventListener('click', () => { state.current = new Date(); renderAll(); });
+  $('#month-label').addEventListener('click', () => { state.current = new Date(); renderAll(); });
 
   $('#add-event-btn').addEventListener('click', () => openEventModal(null, todayISO()));
 
-  // Event modal
   $('#event-modal-close').addEventListener('click', closeEventModal);
   $('#event-cancel').addEventListener('click', closeEventModal);
   $('#event-save').addEventListener('click', handleSaveEvent);
   $('#event-delete').addEventListener('click', handleDeleteEvent);
-  $('#event-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'event-modal') closeEventModal();
-  });
+  $('#event-modal').addEventListener('click', (e) => { if (e.target.id === 'event-modal') closeEventModal(); });
 
-  // Memo (debounced auto-save)
   $('#memo-textarea').addEventListener('input', onMemoInput);
   $('#memo-textarea').addEventListener('blur', () => {
-    if (memoTimer) {
-      clearTimeout(memoTimer);
-      memoTimer = null;
-      saveMemos();
-    }
+    if (memoTimer) { clearTimeout(memoTimer); memoTimer = null; saveMemosFile(); }
   });
 
-  // Categories
   $('#manage-categories-btn').addEventListener('click', openCategoryModal);
   $('#category-modal-close').addEventListener('click', () => { $('#category-modal').hidden = true; });
   $('#category-cancel').addEventListener('click', () => { $('#category-modal').hidden = true; });
@@ -701,25 +455,11 @@ function bind() {
   $('#category-add').addEventListener('click', () => {
     const colors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4'];
     const c = { key: 'new_' + Math.random().toString(36).slice(2, 6), name: '', color: colors[Math.floor(Math.random() * colors.length)] };
-    $('#category-editor').appendChild(buildCategoryRow(c, state.categories.length));
+    $('#category-editor').appendChild(buildCategoryRow(c));
   });
-  $('#category-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'category-modal') $('#category-modal').hidden = true;
-  });
+  $('#category-modal').addEventListener('click', (e) => { if (e.target.id === 'category-modal') $('#category-modal').hidden = true; });
 
-  // Save-status click → re-enter PAT (useful if PAT expired)
-  $('#save-status').addEventListener('click', async () => {
-    const el = $('#save-status');
-    if (el.classList.contains('error') || !getPAT()) {
-      await promptForPAT();
-      setSaveStatus('idle', '변경 없음');
-    }
-  });
-
-  // Esc closes any modal
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeAllModals();
-  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllModals(); });
 }
 
 // ---------- Boot ----------
@@ -727,7 +467,7 @@ async function init() {
   bind();
   await loadAll();
   renderAll();
-  setSaveStatus('idle', getPAT() ? '변경 없음' : 'PAT 미설정');
+  setSaveStatus('idle', '대기');
 }
 
 init();
