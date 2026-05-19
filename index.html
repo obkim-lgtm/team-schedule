@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>팀 일정 · CLIPO</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="styles.css?v=1" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span class="brand-name">팀 일정</span>
+      </div>
+      <div class="month-nav">
+        <button class="icon-btn" id="prev-month" aria-label="이전 달">‹</button>
+        <button class="month-label" id="month-label">2026년 5월</button>
+        <button class="icon-btn" id="next-month" aria-label="다음 달">›</button>
+        <button class="text-btn" id="today-btn">오늘</button>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="sync-status" id="sync-status" title="노션 동기화 상태">
+        <span class="sync-dot"></span>
+        <span class="sync-text">노션 동기화 확인 중…</span>
+      </div>
+      <button class="outline-btn" id="manage-categories-btn">카테고리</button>
+      <button class="outline-btn" id="add-event-btn">+ 일정 추가</button>
+      <button class="primary-btn" id="export-btn" title="변경사항을 ZIP으로 내보냅니다">변경사항 저장</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="calendar-pane">
+      <div class="weekday-row">
+        <div class="weekday weekday-sun">일</div>
+        <div class="weekday">월</div>
+        <div class="weekday">화</div>
+        <div class="weekday">수</div>
+        <div class="weekday">목</div>
+        <div class="weekday">금</div>
+        <div class="weekday weekday-sat">토</div>
+      </div>
+      <div class="calendar-grid" id="calendar-grid"></div>
+    </section>
+
+    <aside class="side-pane">
+      <div class="side-section">
+        <div class="side-section-header">
+          <h2 class="side-title" id="memo-title">이달의 메모</h2>
+          <span class="side-hint">월별 아젠다·기억할 사항</span>
+        </div>
+        <textarea
+          class="memo-textarea"
+          id="memo-textarea"
+          placeholder="이번 달 주요 아젠다, 챙겨야 할 일, 컨텍스트 등을 자유롭게 적어주세요."
+        ></textarea>
+      </div>
+
+      <div class="side-section">
+        <div class="side-section-header">
+          <h2 class="side-title">이달의 일정</h2>
+          <span class="side-hint" id="month-event-count">0건</span>
+        </div>
+        <div class="event-list" id="event-list"></div>
+      </div>
+
+      <div class="side-section">
+        <div class="side-section-header">
+          <h2 class="side-title">카테고리</h2>
+        </div>
+        <div class="category-legend" id="category-legend"></div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- 일정 추가/수정 모달 -->
+  <div class="modal-backdrop" id="event-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2 class="modal-title" id="event-modal-title">일정 추가</h2>
+        <button class="icon-btn" id="event-modal-close" aria-label="닫기">×</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span class="field-label">제목</span>
+          <input type="text" id="event-title" placeholder="예: CLIPO 창체 입력 v1 배포" autocomplete="off" />
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">시작일</span>
+            <input type="date" id="event-start" />
+          </label>
+          <label class="field">
+            <span class="field-label">종료일 <span class="field-sub">(선택)</span></span>
+            <input type="date" id="event-end" />
+          </label>
+        </div>
+        <label class="field">
+          <span class="field-label">카테고리</span>
+          <select id="event-category"></select>
+        </label>
+        <label class="field">
+          <span class="field-label">메모 <span class="field-sub">(선택)</span></span>
+          <textarea id="event-note" rows="3" placeholder="세부 사항, 링크, 담당자 등"></textarea>
+        </label>
+        <div class="modal-meta" id="event-modal-meta" hidden>
+          <span class="meta-pill" id="event-source-pill">노션 동기화</span>
+          <span class="meta-help">노션에서 온 일정은 노션에서만 수정할 수 있어요.</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="text-btn danger" id="event-delete" hidden>삭제</button>
+        <div class="modal-footer-right">
+          <button class="outline-btn" id="event-cancel">취소</button>
+          <button class="primary-btn" id="event-save">저장</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 카테고리 관리 모달 -->
+  <div class="modal-backdrop" id="category-modal" hidden>
+    <div class="modal modal-lg" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2 class="modal-title">카테고리 관리</h2>
+        <button class="icon-btn" id="category-modal-close" aria-label="닫기">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">이름과 색을 자유롭게 정하세요. 노션에서 가져온 일정의 카테고리 이름이 여기 항목과 일치하면 해당 색으로 표시됩니다.</p>
+        <div class="category-editor" id="category-editor"></div>
+        <button class="outline-btn full" id="category-add">+ 카테고리 추가</button>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-footer-right">
+          <button class="outline-btn" id="category-cancel">취소</button>
+          <button class="primary-btn" id="category-save">저장</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 내보내기 안내 모달 -->
+  <div class="modal-backdrop" id="export-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2 class="modal-title">변경사항 내보내기</h2>
+        <button class="icon-btn" id="export-modal-close" aria-label="닫기">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">아래 JSON 파일을 다운로드해서 repo의 <code>data/</code> 폴더에 덮어쓰고 커밋·푸시하면 모두에게 반영됩니다.</p>
+        <div class="export-list" id="export-list"></div>
+        <div class="export-cmd">
+          <div class="export-cmd-label">커밋 명령</div>
+          <pre id="export-cmd-text"></pre>
+          <button class="text-btn" id="export-copy-cmd">복사</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-footer-right">
+          <button class="primary-btn" id="export-modal-done">닫기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js?v=1"></script>
+</body>
+</html>

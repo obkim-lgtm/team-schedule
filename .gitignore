@@ -1,0 +1,5 @@
+desktop.ini
+.DS_Store
+.tmp-*
+.claude/
+node_modules/
