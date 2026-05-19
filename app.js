@@ -1,6 +1,8 @@
 // =====================================================================
 // 팀 일정 (team-schedule)
-// 편집 → server.js의 PUT /api/save/<file> → 파일 저장 + 자동 git push
+// 저장 경로 두 가지:
+//   1) localhost(server.js): PUT /api/save/<file> → 즉시 git push
+//   2) 그 외(배포 사이트): Gitea workflow_dispatch → 약 20~40초 후 반영
 // 노션 연동 없음. 모든 일정은 수동 등록.
 // =====================================================================
 
@@ -9,10 +11,15 @@ const DATA_FILES = {
   manualEvents: 'data/manual-events.json',
   memos:        'data/memos.json',
 };
-const SAVE_ENDPOINT = '/api/save/';
 const MEMO_DEBOUNCE_MS = 1500;
-// 편집 가능 여부: server.js가 떠있는 localhost에서만 true. 배포 사이트는 보기 전용.
-const IS_EDITABLE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+
+const IS_LOCAL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+
+const GITEA_BASE = 'https://gitea.ddapp.io';
+const GITEA_REPO = 'Internal-Tool/team-schedule';
+const GITEA_WORKFLOW = 'save-data.yml';
+const GITEA_REF = 'pages';
+const PAT_KEY = 'team_schedule_gitea_pat';
 
 const state = {
   current: new Date(),
@@ -65,31 +72,122 @@ function setSaveStatus(kind, text) {
   el.querySelector('.save-text').textContent = text;
 }
 
+// ---------- PAT (for deployed environment) ----------
+function getPAT() { return localStorage.getItem(PAT_KEY); }
+
+function promptForPAT() {
+  return new Promise((resolve) => {
+    closeAllModals();
+    $('#pat-input').value = '';
+    $('#pat-modal').hidden = false;
+    setTimeout(() => $('#pat-input').focus(), 50);
+
+    const cleanup = () => {
+      $('#pat-save').onclick = null;
+      $('#pat-cancel').onclick = null;
+      $('#pat-modal-close').onclick = null;
+      $('#pat-input').onkeydown = null;
+    };
+    const onSave = () => {
+      const val = $('#pat-input').value.trim();
+      if (!val) { showToast('토큰을 입력해주세요'); return; }
+      localStorage.setItem(PAT_KEY, val);
+      $('#pat-modal').hidden = true;
+      cleanup();
+      resolve(val);
+    };
+    const onCancel = () => {
+      $('#pat-modal').hidden = true;
+      cleanup();
+      resolve(null);
+    };
+    $('#pat-save').onclick = onSave;
+    $('#pat-cancel').onclick = onCancel;
+    $('#pat-modal-close').onclick = onCancel;
+    $('#pat-input').onkeydown = (e) => {
+      if (e.key === 'Enter') onSave();
+      if (e.key === 'Escape') onCancel();
+    };
+  });
+}
+
+async function ensurePAT() {
+  let token = getPAT();
+  if (!token) token = await promptForPAT();
+  return token;
+}
+
+// ---------- Save (env-aware) ----------
 let saveTimers = {};
-async function postSave(filename, payload) {
-  setSaveStatus('saving', '저장 중…');
-  try {
-    const res = await fetch(SAVE_ENDPOINT + filename, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`HTTP ${res.status}: ${text}`);
+let dispatchQueue = Promise.resolve();
+
+async function saveViaLocalhost(filename, payload) {
+  const res = await fetch('/api/save/' + filename, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + await res.text());
+}
+
+function utf8ToBase64(str) { return btoa(unescape(encodeURIComponent(str))); }
+
+async function saveViaDispatch(filename, payload) {
+  const token = await ensurePAT();
+  if (!token) throw new Error('PAT 없음');
+  const body = {
+    ref: GITEA_REF,
+    inputs: {
+      filename: filename,
+      content_b64: utf8ToBase64(JSON.stringify(payload, null, 2)),
+    },
+  };
+  const res = await fetch(
+    `${GITEA_BASE}/api/v1/repos/${GITEA_REPO}/actions/workflows/${GITEA_WORKFLOW}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': 'token ' + token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
     }
-    setSaveStatus('saved', '저장됨');
-    clearTimeout(saveTimers._reset);
-    saveTimers._reset = setTimeout(() => {
-      if ($('#save-status').classList.contains('saved')) {
-        setSaveStatus('idle', '대기');
-      }
-    }, 2500);
-  } catch (e) {
-    console.error('[save fail]', e);
-    setSaveStatus('error', '저장 실패');
-    showToast(`저장 실패: ${e.message}`);
+  );
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem(PAT_KEY);
+    throw new Error('PAT 인증 실패 — 다시 입력해주세요');
   }
+  if (!res.ok && res.status !== 204) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+}
+
+async function postSave(filename, payload) {
+  // dispatch는 직렬화 (PAT 모달 동시 호출 방지)
+  dispatchQueue = dispatchQueue.then(async () => {
+    setSaveStatus('saving', '저장 중…');
+    try {
+      if (IS_LOCAL) {
+        await saveViaLocalhost(filename, payload);
+        setSaveStatus('saved', '저장됨');
+      } else {
+        await saveViaDispatch(filename, payload);
+        setSaveStatus('saved', '저장됨 · 약 30초 후 반영');
+      }
+      clearTimeout(saveTimers._reset);
+      saveTimers._reset = setTimeout(() => {
+        if ($('#save-status').classList.contains('saved')) {
+          setSaveStatus('idle', '대기');
+        }
+      }, IS_LOCAL ? 2500 : 6000);
+    } catch (e) {
+      console.error('[save fail]', e);
+      setSaveStatus('error', '저장 실패');
+      showToast(`저장 실패: ${e.message}`);
+    }
+  });
+  return dispatchQueue;
 }
 
 function saveEventsFile()     { return postSave('manual-events.json', { events: state.events }); }
@@ -287,12 +385,7 @@ function openEventModal(event, defaultDate) {
   editingEventId = event?.id || null;
   const isEdit = !!event;
 
-  // 보기 전용 모드에서 빈 날짜 클릭은 무시 (이벤트 클릭만 모달 표시)
-  if (!IS_EDITABLE && !isEdit) return;
-
-  $('#event-modal-title').textContent = !IS_EDITABLE
-    ? '일정 보기'
-    : (isEdit ? '일정 수정' : '일정 추가');
+  $('#event-modal-title').textContent = isEdit ? '일정 수정' : '일정 추가';
   $('#event-title').value = event?.title || '';
   $('#event-start').value = event?.start || defaultDate || todayISO();
   $('#event-end').value = event?.end || '';
@@ -308,15 +401,15 @@ function openEventModal(event, defaultDate) {
   });
   sel.value = event?.category || state.categories[0]?.key || '';
 
-  // 보기 전용: 필드 비활성화, 저장·삭제 버튼 숨김
+  // 필드 활성화 + 저장·삭제 버튼 표시
   ['#event-title', '#event-start', '#event-end', '#event-category', '#event-note'].forEach(s => {
-    $(s).disabled = !IS_EDITABLE;
+    $(s).disabled = false;
   });
-  $('#event-delete').hidden = !isEdit || !IS_EDITABLE;
-  $('#event-save').hidden = !IS_EDITABLE;
+  $('#event-delete').hidden = !isEdit;
+  $('#event-save').hidden = false;
 
   $('#event-modal').hidden = false;
-  if (IS_EDITABLE) setTimeout(() => $('#event-title').focus(), 50);
+  setTimeout(() => $('#event-title').focus(), 50);
 }
 
 function closeEventModal() {
@@ -476,23 +569,20 @@ function bind() {
 }
 
 // ---------- Boot ----------
-function applyReadOnlyMode() {
-  // 배포 사이트(또는 server.js 없는 환경)에서는 편집 UI 숨김 — 보기 전용
-  $('#add-event-btn').hidden = true;
-  $('#manage-categories-btn').hidden = true;
-  $('#save-status').hidden = true;
-  const memo = $('#memo-textarea');
-  memo.readOnly = true;
-  memo.placeholder = '메모는 편집 환경에서만 작성됩니다.';
-  document.body.classList.add('readonly');
-}
-
 async function init() {
   bind();
   await loadAll();
   renderAll();
-  if (!IS_EDITABLE) applyReadOnlyMode();
-  else setSaveStatus('idle', '대기');
+  setSaveStatus('idle', IS_LOCAL ? '대기' : (getPAT() ? '대기' : 'PAT 미설정'));
+
+  // save-status 클릭으로 PAT 재입력 (배포 환경)
+  $('#save-status').addEventListener('click', async () => {
+    if (IS_LOCAL) return;
+    if ($('#save-status').classList.contains('error') || !getPAT()) {
+      await promptForPAT();
+      setSaveStatus('idle', getPAT() ? '대기' : 'PAT 미설정');
+    }
+  });
 }
 
 init();
