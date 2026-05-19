@@ -159,7 +159,8 @@ button {
   height: 32px;
 }
 
-.sync-status {
+.sync-status,
+.save-status {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -171,16 +172,40 @@ button {
   font-weight: 500;
   color: var(--text-2);
   margin-right: 4px;
+  cursor: default;
+  white-space: nowrap;
 }
-.sync-dot {
+.sync-dot,
+.save-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--text-3);
+  flex-shrink: 0;
 }
 .sync-status.ok .sync-dot { background: var(--success); }
 .sync-status.warn .sync-dot { background: #F59E0B; }
 .sync-status.err .sync-dot { background: var(--danger); }
+
+.save-status.idle .save-dot { background: var(--text-3); }
+.save-status.saving { color: var(--text); }
+.save-status.saving .save-dot {
+  background: var(--accent);
+  animation: save-pulse 1.2s ease-in-out infinite;
+}
+.save-status.saved { color: var(--success); }
+.save-status.saved .save-dot { background: var(--success); }
+.save-status.error {
+  color: var(--danger);
+  background: var(--danger-bg);
+  cursor: pointer;
+}
+.save-status.error:hover { filter: brightness(0.97); }
+.save-status.error .save-dot { background: var(--danger); }
+@keyframes save-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.4); }
+}
 
 /* === Layout === */
 .layout {

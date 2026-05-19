@@ -1,32 +1,38 @@
 // =====================================================================
 // 팀 일정 (team-schedule)
 // 정적 사이트. data/ 폴더의 JSON을 fetch해서 캘린더 렌더.
-// 편집은 메모리 내에서만 → "변경사항 저장" 버튼으로 JSON 다운로드 → repo 커밋.
+// 편집은 Gitea Contents API로 직접 커밋 (PAT 1회 입력 → localStorage).
 // =====================================================================
 
 const DATA_FILES = {
-  categories: 'data/categories.json',
+  categories:   'data/categories.json',
   manualEvents: 'data/manual-events.json',
-  memos: 'data/memos.json',
+  memos:        'data/memos.json',
   notionEvents: 'data/notion-events.json',
 };
 
+const GITEA_BASE = 'https://gitea.ddapp.io';
+const GITEA_REPO = 'Internal-Tool/team-schedule';
+const GITEA_BRANCH = 'pages';
+const PAT_KEY = 'team_schedule_gitea_pat';
+const MEMO_DEBOUNCE_MS = 1500;
+
 const state = {
-  current: new Date(),               // 표시 중인 월 (1일 기준)
-  categories: [],                    // [{key, name, color}]
-  manualEvents: [],                  // [{id, title, start, end, category, note}]
-  notionEvents: [],                  // [{id, title, start, end, category, note, url}]
-  memos: {},                         // {'YYYY-MM': string}
-  syncMeta: null,                    // {syncedAt, count, ok}
-  dirty: { manualEvents: false, memos: false, categories: false },
-  baseline: {},                      // 변경 비교용 원본 스냅샷
+  current: new Date(),
+  categories: [],
+  manualEvents: [],
+  notionEvents: [],
+  memos: {},
+  syncMeta: null,
+  fileSha: { categories: null, manualEvents: null, memos: null },  // Gitea API용 sha 캐시
 };
 
 const DEFAULT_CATEGORIES = [
-  { key: 'planning',  name: '기획',     color: '#7E44FB' },
+  { key: 'hiai',      name: 'HIAI',     color: '#7E44FB' },
+  { key: 'clipo',     name: 'CLIPO',    color: '#416BFF' },
   { key: 'ops',       name: '운영',     color: '#F59E0B' },
-  { key: 'release',   name: '배포',     color: '#059669' },
   { key: 'marketing', name: '마케팅',   color: '#EC4899' },
+  { key: 'planning',  name: '기획',     color: '#059669' },
 ];
 
 // ---------- Helpers ----------
@@ -58,12 +64,176 @@ function findCategory(key) {
       || { key: 'default', name: '기타', color: '#9CA3AF' };
 }
 
-function isDirty() {
-  return state.dirty.manualEvents || state.dirty.memos || state.dirty.categories;
+// ---------- Gitea API ----------
+function getPAT() {
+  return localStorage.getItem(PAT_KEY);
 }
 
-function markDirty(kind) {
-  state.dirty[kind] = true;
+function promptForPAT() {
+  return new Promise((resolve) => {
+    closeAllModals();
+    $('#pat-input').value = '';
+    $('#pat-modal').hidden = false;
+    setTimeout(() => $('#pat-input').focus(), 50);
+
+    const cleanup = () => {
+      $('#pat-save').onclick = null;
+      $('#pat-cancel').onclick = null;
+      $('#pat-modal-close').onclick = null;
+      $('#pat-input').onkeydown = null;
+    };
+    const onSave = () => {
+      const val = $('#pat-input').value.trim();
+      if (!val) { showToast('토큰을 입력해주세요'); return; }
+      localStorage.setItem(PAT_KEY, val);
+      $('#pat-modal').hidden = true;
+      cleanup();
+      resolve(val);
+    };
+    const onCancel = () => {
+      $('#pat-modal').hidden = true;
+      cleanup();
+      resolve(null);
+    };
+    $('#pat-save').onclick = onSave;
+    $('#pat-cancel').onclick = onCancel;
+    $('#pat-modal-close').onclick = onCancel;
+    $('#pat-input').onkeydown = (e) => {
+      if (e.key === 'Enter') onSave();
+      if (e.key === 'Escape') onCancel();
+    };
+  });
+}
+
+async function ensurePAT() {
+  let token = getPAT();
+  if (!token) token = await promptForPAT();
+  return token;
+}
+
+function utf8ToBase64(str) {
+  return btoa(unescape(encodeURIComponent(str)));
+}
+
+async function giteaGetSha(filepath) {
+  const token = getPAT();
+  if (!token) return null;
+  try {
+    const res = await fetch(
+      `${GITEA_BASE}/api/v1/repos/${GITEA_REPO}/contents/${filepath}?ref=${GITEA_BRANCH}`,
+      { headers: { 'Authorization': `token ${token}` } }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.sha;
+  } catch (e) {
+    console.warn('[gitea sha fail]', e);
+    return null;
+  }
+}
+
+async function giteaPutFile(filepath, content, commitMsg, shaKey) {
+  const token = await ensurePAT();
+  if (!token) throw new Error('NO_PAT');
+
+  let sha = state.fileSha[shaKey];
+  if (!sha) sha = await giteaGetSha(filepath);
+
+  const body = {
+    content: utf8ToBase64(content),
+    message: commitMsg,
+    branch: GITEA_BRANCH,
+  };
+  if (sha) body.sha = sha;
+
+  const res = await fetch(
+    `${GITEA_BASE}/api/v1/repos/${GITEA_REPO}/contents/${filepath}`,
+    {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem(PAT_KEY);
+    throw new Error('AUTH_FAIL');
+  }
+  if (res.status === 409 || res.status === 422) {
+    // sha 충돌 — 다시 fetch 후 재시도 1회
+    const fresh = await giteaGetSha(filepath);
+    if (fresh && fresh !== sha) {
+      state.fileSha[shaKey] = fresh;
+      return giteaPutFile(filepath, content, commitMsg, shaKey);
+    }
+    throw new Error(`CONFLICT: ${res.status}`);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+
+  const result = await res.json();
+  state.fileSha[shaKey] = result.content?.sha || null;
+  return result;
+}
+
+// ---------- Save status indicator ----------
+let saveQueue = Promise.resolve();
+
+function setSaveStatus(kind, text) {
+  const el = $('#save-status');
+  el.className = 'save-status ' + kind;  // kind: idle | saving | saved | error
+  el.querySelector('.save-text').textContent = text;
+}
+
+async function saveData(shaKey, filepath, payload, label) {
+  // 직렬화: 동시 저장이 sha 충돌 안 일으키게 큐로 순차 실행
+  saveQueue = saveQueue.then(async () => {
+    setSaveStatus('saving', '저장 중…');
+    try {
+      const content = JSON.stringify(payload, null, 2) + '\n';
+      await giteaPutFile(filepath, content, `갱신: ${label}`, shaKey);
+      setSaveStatus('saved', '저장됨');
+      setTimeout(() => {
+        if ($('#save-status').classList.contains('saved')) {
+          setSaveStatus('idle', '변경 없음');
+        }
+      }, 2500);
+    } catch (e) {
+      console.error('[save fail]', e);
+      if (e.message === 'NO_PAT') {
+        setSaveStatus('error', 'PAT 입력 필요');
+        showToast('PAT 입력이 취소돼서 저장 못 했어요');
+      } else if (e.message === 'AUTH_FAIL') {
+        setSaveStatus('error', 'PAT 오류');
+        showToast('토큰이 유효하지 않아요. 다시 시도해주세요');
+      } else {
+        setSaveStatus('error', '저장 실패');
+        showToast(`저장 실패: ${e.message}`);
+      }
+    }
+  });
+  return saveQueue;
+}
+
+function saveManualEvents() {
+  return saveData('manualEvents', DATA_FILES.manualEvents,
+    { events: state.manualEvents },
+    `운영 일정 (${state.manualEvents.length}개)`);
+}
+function saveCategoriesFile() {
+  return saveData('categories', DATA_FILES.categories,
+    { categories: state.categories },
+    `카테고리 (${state.categories.length}개)`);
+}
+function saveMemos() {
+  return saveData('memos', DATA_FILES.memos,
+    { memos: state.memos },
+    `메모 (${fmtMonth(state.current)})`);
 }
 
 // ---------- Data loading ----------
@@ -91,16 +261,9 @@ async function loadAll() {
   state.memos = memos.memos || {};
   state.notionEvents = (notion.events || []).map(e => ({ ...e, source: 'notion' }));
   state.syncMeta = { syncedAt: notion.syncedAt, ok: notion.ok !== false, error: notion.error };
-
-  state.baseline = {
-    categories: JSON.stringify(state.categories),
-    manualEvents: JSON.stringify(state.manualEvents),
-    memos: JSON.stringify(state.memos),
-  };
-  state.dirty = { manualEvents: false, memos: false, categories: false };
 }
 
-// ---------- All events for a given day ----------
+// ---------- Events ----------
 function getAllEvents() {
   return [
     ...state.notionEvents.map(e => ({ ...e, source: 'notion', locked: true })),
@@ -135,7 +298,7 @@ function renderCalendar() {
   const year = state.current.getFullYear();
   const month = state.current.getMonth();
   const first = new Date(year, month, 1);
-  const firstDow = first.getDay(); // 0=Sun
+  const firstDow = first.getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const daysInPrev = new Date(year, month, 0).getDate();
 
@@ -152,8 +315,6 @@ function renderCalendar() {
   for (let d = 1; d <= trailing; d++) {
     cells.push({ year, month: month + 1, day: d, otherMonth: true });
   }
-
-  // Always 6 rows for consistent height
   while (cells.length < 42) {
     const last = cells[cells.length - 1];
     const nextDate = new Date(last.year, last.month, last.day + 1);
@@ -166,7 +327,7 @@ function renderCalendar() {
   }
 
   const today = new Date();
-  cells.forEach((c, idx) => {
+  cells.forEach((c) => {
     const date = new Date(c.year, c.month, c.day);
     const dow = date.getDay();
     const cell = document.createElement('div');
@@ -296,7 +457,7 @@ function renderSyncStatus() {
   if (!meta.syncedAt) {
     el.classList.add('warn');
     text.textContent = '노션 미동기화';
-    el.title = '아직 노션 동기화가 한 번도 수행되지 않았습니다. README의 노션 세팅 가이드 참고.';
+    el.title = '아직 노션 동기화가 한 번도 수행되지 않았습니다.';
     return;
   }
   const at = new Date(meta.syncedAt);
@@ -313,7 +474,7 @@ function renderSyncStatus() {
     el.title = meta.error || '동기화 실패';
   } else {
     el.classList.add('ok');
-    text.textContent = `노션 동기화 ${agoStr}`;
+    text.textContent = `노션 ${agoStr}`;
     el.title = `마지막 동기화: ${at.toLocaleString('ko-KR')}`;
   }
 }
@@ -349,7 +510,6 @@ function openEventModal(event, defaultDate) {
   $('#event-end').value = event?.end || '';
   $('#event-note').value = event?.note || '';
 
-  // category select
   const sel = $('#event-category');
   sel.innerHTML = '';
   state.categories.forEach(c => {
@@ -360,7 +520,6 @@ function openEventModal(event, defaultDate) {
   });
   sel.value = event?.category || state.categories[0]?.key || '';
 
-  // lock fields if notion-sourced
   ['#event-title', '#event-start', '#event-end', '#event-category', '#event-note'].forEach(s => {
     $(s).disabled = isLocked;
   });
@@ -378,7 +537,7 @@ function closeEventModal() {
   editingEventId = null;
 }
 
-function saveEvent() {
+async function handleSaveEvent() {
   const title = $('#event-title').value.trim();
   const start = $('#event-start').value;
   const end = $('#event-end').value || '';
@@ -397,20 +556,18 @@ function saveEvent() {
   } else {
     state.manualEvents.push({ id: newId(), title, start, end, category, note });
   }
-  markDirty('manualEvents');
   closeEventModal();
   renderAll();
-  showToast('저장됐어요. 변경사항 저장 잊지 마세요');
+  await saveManualEvents();
 }
 
-function deleteEvent() {
+async function handleDeleteEvent() {
   if (!editingEventId) return;
   if (!confirm('이 일정을 삭제할까요?')) return;
   state.manualEvents = state.manualEvents.filter(e => e.id !== editingEventId);
-  markDirty('manualEvents');
   closeEventModal();
   renderAll();
-  showToast('삭제됐어요. 변경사항 저장 잊지 마세요');
+  await saveManualEvents();
 }
 
 // ---------- Category modal ----------
@@ -465,14 +622,13 @@ function buildCategoryRow(cat, idx) {
   return row;
 }
 
-function saveCategories() {
+async function handleSaveCategories() {
   const rows = $$('#category-editor .category-row');
   const next = [];
   for (const r of rows) {
     const name = r.querySelector('input[type="text"]:not(.hex)').value.trim();
     const color = r.querySelector('input[type="color"]').value;
     if (!name) continue;
-    // key: 기존 key 유지 (이름 같으면) or 새로 부여
     const existing = state.categories.find(c => c.name === name);
     next.push({
       key: existing?.key || ('cat_' + name.replace(/\s+/g, '_').toLowerCase() + '_' + Math.random().toString(36).slice(2, 6)),
@@ -482,90 +638,19 @@ function saveCategories() {
   }
   if (next.length === 0) { showToast('최소 1개 이상 카테고리가 필요해요'); return; }
   state.categories = next;
-  markDirty('categories');
   $('#category-modal').hidden = true;
   renderAll();
-  showToast('카테고리 저장됨');
+  await saveCategoriesFile();
 }
 
-// ---------- Export ----------
-function downloadJSON(filename, obj) {
-  const blob = new Blob([JSON.stringify(obj, null, 2) + '\n'], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
-}
-
-function openExportModal() {
-  if (!isDirty()) {
-    showToast('변경된 내용이 없어요');
-    return;
-  }
-  closeAllModals();
-  const list = $('#export-list');
-  list.innerHTML = '';
-  const changed = [];
-
-  if (state.dirty.manualEvents) {
-    changed.push({
-      filename: 'manual-events.json',
-      payload: { events: state.manualEvents },
-      meta: `${state.manualEvents.length}개 일정`,
-    });
-  }
-  if (state.dirty.memos) {
-    const count = Object.values(state.memos).filter(v => v && v.trim()).length;
-    changed.push({
-      filename: 'memos.json',
-      payload: { memos: state.memos },
-      meta: `${count}개 월에 메모 작성됨`,
-    });
-  }
-  if (state.dirty.categories) {
-    changed.push({
-      filename: 'categories.json',
-      payload: { categories: state.categories },
-      meta: `${state.categories.length}개 카테고리`,
-    });
-  }
-
-  changed.forEach(c => {
-    const item = document.createElement('div');
-    item.className = 'export-item';
-    const left = document.createElement('div');
-    const name = document.createElement('div');
-    name.className = 'export-item-name';
-    name.textContent = `data/${c.filename}`;
-    const meta = document.createElement('div');
-    meta.className = 'export-item-meta';
-    meta.textContent = c.meta;
-    left.appendChild(name);
-    left.appendChild(meta);
-
-    const btn = document.createElement('button');
-    btn.className = 'outline-btn';
-    btn.textContent = '다운로드';
-    btn.addEventListener('click', () => downloadJSON(c.filename, c.payload));
-
-    item.appendChild(left);
-    item.appendChild(btn);
-    list.appendChild(item);
-  });
-
-  const files = changed.map(c => `data/${c.filename}`).join(' ');
-  $('#export-cmd-text').textContent =
-    `git add ${files}\ngit commit -m "일정 갱신: ${new Date().toLocaleDateString('ko-KR')}"\ngit push`;
-
-  $('#export-modal').hidden = false;
-}
-
-function copyExportCmd() {
-  const txt = $('#export-cmd-text').textContent;
-  navigator.clipboard.writeText(txt).then(() => showToast('복사됐어요'));
+// ---------- Memo (debounced auto-save) ----------
+let memoTimer = null;
+function onMemoInput(e) {
+  const key = fmtMonth(state.current);
+  state.memos[key] = e.target.value;
+  setSaveStatus('saving', '입력 중…');
+  clearTimeout(memoTimer);
+  memoTimer = setTimeout(() => { saveMemos(); }, MEMO_DEBOUNCE_MS);
 }
 
 // ---------- Event wiring ----------
@@ -592,24 +677,27 @@ function bind() {
   // Event modal
   $('#event-modal-close').addEventListener('click', closeEventModal);
   $('#event-cancel').addEventListener('click', closeEventModal);
-  $('#event-save').addEventListener('click', saveEvent);
-  $('#event-delete').addEventListener('click', deleteEvent);
+  $('#event-save').addEventListener('click', handleSaveEvent);
+  $('#event-delete').addEventListener('click', handleDeleteEvent);
   $('#event-modal').addEventListener('click', (e) => {
     if (e.target.id === 'event-modal') closeEventModal();
   });
 
-  // Memo
-  $('#memo-textarea').addEventListener('input', (e) => {
-    const key = fmtMonth(state.current);
-    state.memos[key] = e.target.value;
-    markDirty('memos');
+  // Memo (debounced auto-save)
+  $('#memo-textarea').addEventListener('input', onMemoInput);
+  $('#memo-textarea').addEventListener('blur', () => {
+    if (memoTimer) {
+      clearTimeout(memoTimer);
+      memoTimer = null;
+      saveMemos();
+    }
   });
 
   // Categories
   $('#manage-categories-btn').addEventListener('click', openCategoryModal);
   $('#category-modal-close').addEventListener('click', () => { $('#category-modal').hidden = true; });
   $('#category-cancel').addEventListener('click', () => { $('#category-modal').hidden = true; });
-  $('#category-save').addEventListener('click', saveCategories);
+  $('#category-save').addEventListener('click', handleSaveCategories);
   $('#category-add').addEventListener('click', () => {
     const colors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4'];
     const c = { key: 'new_' + Math.random().toString(36).slice(2, 6), name: '', color: colors[Math.floor(Math.random() * colors.length)] };
@@ -619,28 +707,18 @@ function bind() {
     if (e.target.id === 'category-modal') $('#category-modal').hidden = true;
   });
 
-  // Export
-  $('#export-btn').addEventListener('click', openExportModal);
-  $('#export-modal-close').addEventListener('click', () => { $('#export-modal').hidden = true; });
-  $('#export-modal-done').addEventListener('click', () => { $('#export-modal').hidden = true; });
-  $('#export-copy-cmd').addEventListener('click', copyExportCmd);
-  $('#export-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'export-modal') $('#export-modal').hidden = true;
+  // Save-status click → re-enter PAT (useful if PAT expired)
+  $('#save-status').addEventListener('click', async () => {
+    const el = $('#save-status');
+    if (el.classList.contains('error') || !getPAT()) {
+      await promptForPAT();
+      setSaveStatus('idle', '변경 없음');
+    }
   });
 
   // Esc closes any modal
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      $$('.modal-backdrop').forEach(m => m.hidden = true);
-    }
-  });
-
-  // Warn before unload if dirty
-  window.addEventListener('beforeunload', (e) => {
-    if (isDirty()) {
-      e.preventDefault();
-      e.returnValue = '';
-    }
+    if (e.key === 'Escape') closeAllModals();
   });
 }
 
@@ -649,6 +727,7 @@ async function init() {
   bind();
   await loadAll();
   renderAll();
+  setSaveStatus('idle', getPAT() ? '변경 없음' : 'PAT 미설정');
 }
 
 init();

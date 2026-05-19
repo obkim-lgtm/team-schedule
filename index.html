@@ -23,13 +23,16 @@
       </div>
     </div>
     <div class="topbar-right">
+      <div class="save-status" id="save-status" title="자동 저장 상태">
+        <span class="save-dot"></span>
+        <span class="save-text">변경 없음</span>
+      </div>
       <div class="sync-status" id="sync-status" title="노션 동기화 상태">
         <span class="sync-dot"></span>
         <span class="sync-text">노션 동기화 확인 중…</span>
       </div>
       <button class="outline-btn" id="manage-categories-btn">카테고리</button>
-      <button class="outline-btn" id="add-event-btn">+ 일정 추가</button>
-      <button class="primary-btn" id="export-btn" title="변경사항을 ZIP으로 내보냅니다">변경사항 저장</button>
+      <button class="primary-btn" id="add-event-btn">+ 일정 추가</button>
     </div>
   </header>
 
@@ -143,25 +146,25 @@
     </div>
   </div>
 
-  <!-- 내보내기 안내 모달 -->
-  <div class="modal-backdrop" id="export-modal" hidden>
+  <!-- PAT 입력 모달 (최초 1회) -->
+  <div class="modal-backdrop" id="pat-modal" hidden>
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-header">
-        <h2 class="modal-title">변경사항 내보내기</h2>
-        <button class="icon-btn" id="export-modal-close" aria-label="닫기">×</button>
+        <h2 class="modal-title">Gitea PAT 입력</h2>
+        <button class="icon-btn" id="pat-modal-close" aria-label="닫기">×</button>
       </div>
       <div class="modal-body">
-        <p class="modal-desc">아래 JSON 파일을 다운로드해서 repo의 <code>data/</code> 폴더에 덮어쓰고 커밋·푸시하면 모두에게 반영됩니다.</p>
-        <div class="export-list" id="export-list"></div>
-        <div class="export-cmd">
-          <div class="export-cmd-label">커밋 명령</div>
-          <pre id="export-cmd-text"></pre>
-          <button class="text-btn" id="export-copy-cmd">복사</button>
-        </div>
+        <p class="modal-desc">처음 1회만 입력하면 이후 자동 저장돼요. <code>write:repository</code> 권한이 있는 PAT가 필요해요. 발급: Gitea 우상단 프로필 → Settings → Applications → Generate New Token.</p>
+        <label class="field">
+          <span class="field-label">Personal Access Token</span>
+          <input type="password" id="pat-input" placeholder="abcdef0123456789..." autocomplete="off" />
+        </label>
+        <p class="modal-desc" style="font-size:12px;color:var(--text-3);">이 토큰은 이 브라우저의 localStorage에만 저장됩니다. 다른 기기에서 편집하려면 거기서도 입력해야 해요.</p>
       </div>
       <div class="modal-footer">
         <div class="modal-footer-right">
-          <button class="primary-btn" id="export-modal-done">닫기</button>
+          <button class="outline-btn" id="pat-cancel">취소</button>
+          <button class="primary-btn" id="pat-save">저장</button>
         </div>
       </div>
     </div>

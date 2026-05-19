@@ -6,24 +6,42 @@
 - **Gitea repo**: http://192.168.50.201:3000/Internal-Tool/team-schedule
 - **로컬 작업 경로**: `F:\내 드라이브\Claude\_team_schedule\`
 
-## 일정·메모 편집 (올립용)
+## 일정·메모 편집 (올립 + 권한 있는 사람)
 
-1. 사이트 접속 → 좌측 캘린더에서 **날짜 클릭** 또는 헤더 **+ 일정 추가**
-2. 모달에서 제목·시작일·종료일·카테고리·메모 입력 → 저장
-3. 우측 **이달의 메모** 텍스트박스에 월별 아젠다 자유 기재
-4. 카테고리 추가·색 변경은 헤더 **카테고리** 버튼
-5. 변경 끝나면 헤더 **변경사항 저장** 클릭 → 변경된 JSON 파일들 다운로드
-6. 다운로드한 파일을 `data/` 폴더에 덮어쓰고 커밋·푸시:
-   ```bash
-   cd "F:\내 드라이브\Claude\_team_schedule"
-   git add data/manual-events.json data/memos.json data/categories.json
-   git commit -m "일정 갱신: YYYY-MM-DD"
-   git push
-   ```
-   (모달 하단의 명령어 그대로 복사 가능)
-7. 약 30초 후 사이트에 반영
+### 첫 1회: PAT 입력
+1. 사이트 접속 → 운영 일정·메모를 처음 수정하려고 하면 **Gitea PAT 입력** 모달이 뜸
+2. Gitea PAT 발급 → 토큰 붙여넣기 → 저장
+3. localStorage에 저장돼서 이후 자동 사용
 
-## 노션 동기화
+### PAT 발급 방법
+1. http://192.168.50.201:3000/user/settings/applications
+2. Generate New Token
+3. Name: `team-schedule-edit` (또는 원하는 이름)
+4. Scopes: **write:repository** 체크 필수
+5. Generate → 토큰 복사 (이 화면 닫으면 다시 못 봄)
+
+### 이후 사용
+- **일정 추가**: 날짜 클릭 또는 [+ 일정 추가] → 저장 → 자동 커밋·push (약 30초 후 사이트 반영)
+- **일정 수정/삭제**: 캘린더에서 해당 칩 클릭 → 수정 또는 삭제
+- **메모 작성**: 우측 메모 영역에 자유 기재 → 1.5초 멈추면 자동 저장
+- **카테고리 관리**: 헤더 [카테고리] 버튼 → 이름·색 편집 → 저장
+
+### 저장 상태 인디케이터
+헤더 좌측에 표시:
+
+| 표시 | 의미 |
+|---|---|
+| `변경 없음` | 대기 중 |
+| `입력 중…` | 메모 입력 중 (debounce 대기) |
+| `저장 중…` | Gitea API 호출 중 |
+| `저장됨` | 완료 (2.5초 후 사라짐) |
+| `PAT 미설정` | 토큰 없음 — 편집 시도하면 입력 모달 |
+| `PAT 오류` | 토큰 유효하지 않음 — 클릭해서 재입력 |
+| `저장 실패` | 네트워크/권한 등 — 클릭해서 PAT 재입력 |
+
+## 노션 동기화 (배포 일정)
+
+노션 "릴리즈 노트" DB → `data/notion-events.json` 자동 갱신.
 
 ### 자동
 - 매일 09:00 / 12:00 / 18:00 KST (Gitea Actions cron)
@@ -32,55 +50,47 @@
 ### 수동
 - Gitea repo → **Actions** 탭 → **Notion → notion-events.json** 워크플로 → **Run workflow**
 
-### 새 노션 DB 연동 시
-1. 노션에서 Integration `team-schedule-sync`를 해당 DB 페이지의 Connections에 추가
-2. Gitea repo → Settings → Actions → Secrets에서 `NOTION_DATABASE_ID` 갱신
-3. 속성 이름이 기본값(`날짜`, `카테고리`)과 다르면 Settings → Actions → Variables에서 `NOTION_DATE_PROP` / `NOTION_CATEGORY_PROP` 설정
-4. 수동 실행으로 검증
+## 노션과 사이트 색 매핑
 
-## 초기 세팅 (1회)
+- 노션 DB의 `프로젝트` Select 값 = 사이트 카테고리 이름 일치 → 같은 색
+- 현재: `HIAI` 보라(#7E44FB), `CLIPO` 파랑(#416BFF)
+- 일치 안 하면 회색 표시 — 사이트 카테고리 수정으로 맞추세요
 
-### 노션 Integration 만들기
-1. https://www.notion.so/profile/integrations → **New integration**
-2. Name: `team-schedule-sync`, Type: `Internal`, Capabilities: `Read content`만 체크
-3. 발급된 **Internal Integration Secret** 복사
+## 초기 세팅 (이미 완료된 항목)
 
-### 노션 DB 연결
-1. 대상 캘린더 DB 페이지 우상단 `⋯` → **Connections** → `team-schedule-sync` 추가
-2. DB URL에서 32자리 hex ID 추출 (`notion.so/<ws>/<32hex>?v=...`)
+### 노션 Integration
+- 이름: `team-schedule-sync`
+- 워크스페이스: Datadriven
+- 권한: Read content
+- 연결된 DB: 릴리즈 노트 (`26f17e5c8cf180f7ac6ef4650e89e859`)
 
-### Gitea Secrets/Vars 등록
-- repo Settings → Actions → Secrets:
-  - `NOTION_TOKEN` = `secret_...`
-  - `NOTION_DATABASE_ID` = `32hex`
-- repo Settings → Actions → Variables (DB 속성 이름이 다를 때만):
-  - `NOTION_DATE_PROP`, `NOTION_CATEGORY_PROP`, `NOTION_TITLE_PROP`
+### Gitea Secrets
+repo Settings → Actions → Secrets:
+- `NOTION_TOKEN`: Notion Integration Secret
+- `NOTION_DATABASE_ID`: `26f17e5c8cf180f7ac6ef4650e89e859`
 
-### 첫 동기화
-- Actions 탭 → Notion 워크플로 → Run workflow → 성공 확인 → 사이트 새로고침
-
-## 새 카테고리 만들 때 노션과 매칭
-
-노션 DB의 카테고리 select 값 이름이 **사이트 카테고리 이름과 정확히 일치**하면 같은 색으로 표시됩니다.
-
-예) 노션에 select 값 `기획`, 사이트에 카테고리 `기획`(보라) → 노션 일정이 보라색으로 표시.
-
-이름이 안 맞으면 회색(기타)으로 표시되니, 양쪽 이름을 똑같이 유지하세요.
+### Gitea Variables (선택)
+- `NOTION_DATE_PROP`: 기본 `배포일`
+- `NOTION_CATEGORY_PROP`: 기본 `프로젝트`
+- `NOTION_DATE_FROM`: 기본 `2026-05-01`
 
 ## 로컬 미리보기
 
-`preview_start`로 띄우거나, 그냥 `index.html`을 브라우저로 열어도 동작합니다.
+```
+preview_start('team-schedule')  → http://localhost:5184
+```
 
 ## 트러블슈팅
 
 | 증상 | 원인·해결 |
 |---|---|
-| 헤더에 "노션 동기화 실패" | Gitea Actions 로그 확인. 토큰 만료, DB ID 변경, Integration이 DB에 연결 안 됨 등 |
-| 노션 일정이 안 보임 | (1) DB 속성 이름 확인 (2) 해당 row에 날짜 비어있지 않은지 (3) 수동 트리거 후 새로고침 |
-| 사이트가 안 떠요 | Gitea Pages 활성화 확인. repo Settings → Pages → Branch: `pages` |
-| "변경사항 없음" 토스트만 뜸 | 실제로 편집 안 됐거나 페이지 새로고침 후 메모리 초기화됨 |
+| "노션 동기화 실패" | Gitea Actions 로그 확인. 토큰 만료, DB ID 변경, Integration이 DB에 연결 안 됨 |
+| 노션 일정 안 보임 | (1) DB 속성 이름 확인 (2) 해당 row 날짜 비어있지 않은지 (3) 배포일 < 2026-05-01인지 (필터됨) |
+| 사이트 안 뜸 | Gitea Pages 활성화 확인. repo Settings → Pages → Branch: `pages` |
+| 저장 실패 | save-status 칩 클릭 → PAT 재입력. PAT에 `write:repository` 권한 있는지 확인 |
+| 저장은 됐는데 사이트에 반영 안 됨 | Gitea Pages 재배포(~30초) 대기. 새로고침 |
 
 ## 관련
 
 - 허브 카드: https://obkim-lgtm.github.io/hub/ (Internal App 섹션)
-- 참고 사례: `_dd_att` (DD_Attendance) — Gitea 이주 + cron 동기화 패턴 동일
+- 참고 사례: `_dd_att` (DD_Attendance) — 같은 패턴(localStorage PAT + Gitea API)
