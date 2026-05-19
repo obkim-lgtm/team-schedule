@@ -1,9 +1,24 @@
 {
   "categories": [
-    { "key": "hiai",      "name": "HIAI",     "color": "#7E44FB" },
-    { "key": "clipo",     "name": "CLIPO",    "color": "#416BFF" },
-    { "key": "ops",       "name": "운영",     "color": "#F59E0B" },
-    { "key": "marketing", "name": "마케팅",   "color": "#EC4899" },
-    { "key": "planning",  "name": "기욁",     "color": "#059669" }
+    {
+      "key": "hiai",
+      "name": "HIAI",
+      "color": "#7E44FB"
+    },
+    {
+      "key": "clipo",
+      "name": "CLIPO",
+      "color": "#416BFF"
+    },
+    {
+      "key": "ops",
+      "name": "운영",
+      "color": "#F59E0B"
+    },
+    {
+      "key": "cat_기획_eyva",
+      "name": "기획",
+      "color": "#059669"
+    }
   ]
 }
