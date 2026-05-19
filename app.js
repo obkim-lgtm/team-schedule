@@ -385,7 +385,10 @@ function openEventModal(event, defaultDate) {
   editingEventId = event?.id || null;
   const isEdit = !!event;
 
-  $('#event-modal-title').textContent = isEdit ? '일정 수정' : '일정 추가';
+  // 배포(보기 전용): 빈 날짜 클릭은 무시. 칩 클릭만 모달 표시
+  if (!IS_LOCAL && !isEdit) return;
+
+  $('#event-modal-title').textContent = !IS_LOCAL ? '일정 보기' : (isEdit ? '일정 수정' : '일정 추가');
   $('#event-title').value = event?.title || '';
   $('#event-start').value = event?.start || defaultDate || todayISO();
   $('#event-end').value = event?.end || '';
@@ -401,15 +404,14 @@ function openEventModal(event, defaultDate) {
   });
   sel.value = event?.category || state.categories[0]?.key || '';
 
-  // 필드 활성화 + 저장·삭제 버튼 표시
   ['#event-title', '#event-start', '#event-end', '#event-category', '#event-note'].forEach(s => {
-    $(s).disabled = false;
+    $(s).disabled = !IS_LOCAL;
   });
-  $('#event-delete').hidden = !isEdit;
-  $('#event-save').hidden = false;
+  $('#event-delete').hidden = !isEdit || !IS_LOCAL;
+  $('#event-save').hidden = !IS_LOCAL;
 
   $('#event-modal').hidden = false;
-  setTimeout(() => $('#event-title').focus(), 50);
+  if (IS_LOCAL) setTimeout(() => $('#event-title').focus(), 50);
 }
 
 function closeEventModal() {
@@ -569,20 +571,22 @@ function bind() {
 }
 
 // ---------- Boot ----------
+function applyReadOnlyMode() {
+  $('#add-event-btn').hidden = true;
+  $('#manage-categories-btn').hidden = true;
+  $('#save-status').hidden = true;
+  const memo = $('#memo-textarea');
+  memo.readOnly = true;
+  memo.placeholder = '편집은 작업 PC(localhost:5184)에서만 가능합니다.';
+  document.body.classList.add('readonly');
+}
+
 async function init() {
   bind();
   await loadAll();
   renderAll();
-  setSaveStatus('idle', IS_LOCAL ? '대기' : (getPAT() ? '대기' : 'PAT 미설정'));
-
-  // save-status 클릭으로 PAT 재입력 (배포 환경)
-  $('#save-status').addEventListener('click', async () => {
-    if (IS_LOCAL) return;
-    if ($('#save-status').classList.contains('error') || !getPAT()) {
-      await promptForPAT();
-      setSaveStatus('idle', getPAT() ? '대기' : 'PAT 미설정');
-    }
-  });
+  if (!IS_LOCAL) applyReadOnlyMode();
+  else setSaveStatus('idle', '대기');
 }
 
 init();
