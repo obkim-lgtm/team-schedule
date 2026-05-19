@@ -11,6 +11,8 @@ const DATA_FILES = {
 };
 const SAVE_ENDPOINT = '/api/save/';
 const MEMO_DEBOUNCE_MS = 1500;
+// 편집 가능 여부: server.js가 떠있는 localhost에서만 true. 배포 사이트는 보기 전용.
+const IS_EDITABLE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
 const state = {
   current: new Date(),
@@ -285,7 +287,12 @@ function openEventModal(event, defaultDate) {
   editingEventId = event?.id || null;
   const isEdit = !!event;
 
-  $('#event-modal-title').textContent = isEdit ? '일정 수정' : '일정 추가';
+  // 보기 전용 모드에서 빈 날짜 클릭은 무시 (이벤트 클릭만 모달 표시)
+  if (!IS_EDITABLE && !isEdit) return;
+
+  $('#event-modal-title').textContent = !IS_EDITABLE
+    ? '일정 보기'
+    : (isEdit ? '일정 수정' : '일정 추가');
   $('#event-title').value = event?.title || '';
   $('#event-start').value = event?.start || defaultDate || todayISO();
   $('#event-end').value = event?.end || '';
@@ -301,9 +308,15 @@ function openEventModal(event, defaultDate) {
   });
   sel.value = event?.category || state.categories[0]?.key || '';
 
-  $('#event-delete').hidden = !isEdit;
+  // 보기 전용: 필드 비활성화, 저장·삭제 버튼 숨김
+  ['#event-title', '#event-start', '#event-end', '#event-category', '#event-note'].forEach(s => {
+    $(s).disabled = !IS_EDITABLE;
+  });
+  $('#event-delete').hidden = !isEdit || !IS_EDITABLE;
+  $('#event-save').hidden = !IS_EDITABLE;
+
   $('#event-modal').hidden = false;
-  setTimeout(() => $('#event-title').focus(), 50);
+  if (IS_EDITABLE) setTimeout(() => $('#event-title').focus(), 50);
 }
 
 function closeEventModal() {
@@ -463,11 +476,23 @@ function bind() {
 }
 
 // ---------- Boot ----------
+function applyReadOnlyMode() {
+  // 배포 사이트(또는 server.js 없는 환경)에서는 편집 UI 숨김 — 보기 전용
+  $('#add-event-btn').hidden = true;
+  $('#manage-categories-btn').hidden = true;
+  $('#save-status').hidden = true;
+  const memo = $('#memo-textarea');
+  memo.readOnly = true;
+  memo.placeholder = '메모는 편집 환경에서만 작성됩니다.';
+  document.body.classList.add('readonly');
+}
+
 async function init() {
   bind();
   await loadAll();
   renderAll();
-  setSaveStatus('idle', '대기');
+  if (!IS_EDITABLE) applyReadOnlyMode();
+  else setSaveStatus('idle', '대기');
 }
 
 init();
