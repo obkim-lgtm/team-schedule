@@ -37,6 +37,24 @@ function runGit(args, cb) {
   });
 }
 
+// Google Drive가 .git/ 안에 desktop.ini를 자꾸 박아서 git이 깨짐.
+// push 전에 매번 정리.
+function cleanGitJunk() {
+  try {
+    const walk = (dir) => {
+      for (const name of fs.readdirSync(dir)) {
+        const p = path.join(dir, name);
+        const st = fs.lstatSync(p);
+        if (st.isDirectory()) walk(p);
+        else if (name === 'desktop.ini') fs.unlinkSync(p);
+      }
+    };
+    walk(path.join(ROOT, '.git'));
+  } catch (e) {
+    console.warn('[clean junk]', e.message);
+  }
+}
+
 function schedulePush(relpath) {
   pushQueue.add(relpath);
   clearTimeout(pushTimer);
@@ -51,6 +69,7 @@ function flushPush() {
   const files = [...pushQueue];
   pushQueue.clear();
 
+  cleanGitJunk();
   const addArgs = files.map(f => `"${f}"`).join(' ');
   runGit(`add ${addArgs}`, (e1) => {
     if (e1) { console.error('[git add]', e1.message); pushing = false; return; }

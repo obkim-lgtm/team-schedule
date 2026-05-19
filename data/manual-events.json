@@ -1,12 +1,3 @@
 {
-  "events": [
-    {
-      "id": "e_w16yemqi",
-      "title": "cleanup test",
-      "start": "2026-05-31",
-      "end": "",
-      "category": "hiai",
-      "note": ""
-    }
-  ]
+  "events": []
 }
