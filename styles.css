@@ -468,6 +468,7 @@ button {
   padding: 24px;
   backdrop-filter: blur(2px);
 }
+.modal-backdrop[hidden] { display: none !important; }
 .modal {
   background: var(--surface);
   border-radius: var(--radius-lg);
