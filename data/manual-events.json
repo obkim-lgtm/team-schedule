@@ -6,7 +6,13 @@
       "start": "2026-05-20",
       "end": "",
       "category": "clipo",
-      "note": "릴리즈 노트\nhttps://www.notion.so/datadriven/v2-21-35917e5c8cf1809e9390f87108f9268f?source=copy_link"
+      "note": "",
+      "links": [
+        {
+          "url": "https://www.notion.so/datadriven/v2-21-35917e5c8cf1809e9390f87108f9268f?source=copy_link",
+          "label": "릴리즈노트"
+        }
+      ]
     },
     {
       "id": "e_k7iu0tkm",
