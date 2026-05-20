@@ -18,11 +18,17 @@
     },
     {
       "id": "e_1jtts8cb",
-      "title": "백지답안개선프롬프트",
+      "title": "백지답안개선프롬프트 배포",
       "start": "2026-05-26",
       "end": "",
       "category": "hiai",
-      "note": "채점피드백 프롬프트 수정\n릴리즈 노트 : https://www.notion.so/datadriven/v2-21-X-35917e5c8cf18026938af622bd09955c?source=copy_link"
+      "note": "채점피드백 프롬프트 수정",
+      "links": [
+        {
+          "url": "https://www.notion.so/datadriven/v2-21-X-35917e5c8cf18026938af622bd09955c?source=copy_link",
+          "label": "릴리즈노트"
+        }
+      ]
     },
     {
       "id": "e_cllzowe4",
