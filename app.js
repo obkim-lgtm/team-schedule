@@ -51,6 +51,13 @@ const sameDay = (a, b) => a && b && fmtDate(a) === fmtDate(b);
 const todayISO = () => fmtDate(new Date());
 const newId = () => 'e_' + Math.random().toString(36).slice(2, 10);
 
+function autoResizeTextarea(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  const max = Math.floor(window.innerHeight * 0.6);
+  el.style.height = Math.min(el.scrollHeight + 2, max) + 'px';
+}
+
 function showToast(msg, ms = 1800) {
   const t = $('#toast');
   t.textContent = msg;
@@ -63,6 +70,41 @@ function findCategory(key) {
   return state.categories.find(c => c.key === key)
       || state.categories.find(c => c.name === key)
       || { key: 'default', name: '기타', color: '#9CA3AF' };
+}
+
+// ---------- Link helpers ----------
+function detectLinkInfo(url) {
+  if (!url) return { type: 'other', label: '링크', color: '#6B7280' };
+  let host;
+  try { host = new URL(url).hostname.toLowerCase(); }
+  catch { return { type: 'other', label: '링크', color: '#9CA3AF' }; }
+
+  if (host.endsWith('notion.so') || host.endsWith('notion.site'))   return { type: 'notion', label: 'Notion',     color: '#111111' };
+  if (host.endsWith('figma.com'))                                    return { type: 'figma',  label: 'Figma',      color: '#F24E1E' };
+  if (host.endsWith('github.com') || host.endsWith('gitea.ddapp.io'))return { type: 'git',    label: 'Git',        color: '#181717' };
+  if (host.endsWith('slack.com'))                                    return { type: 'slack',  label: 'Slack',      color: '#611F69' };
+  if (host.includes('docs.google.com'))                              return { type: 'gdocs',  label: 'Google Docs',color: '#4285F4' };
+  if (host.includes('drive.google.com'))                             return { type: 'gdrive', label: 'Drive',      color: '#1FA463' };
+  return { type: 'other', label: host.replace(/^www\./, ''), color: '#4B5563' };
+}
+
+function defaultLinkTitle(link) {
+  if (link.label) return link.label;
+  if (!link.url) return '(URL 없음)';
+  try {
+    const u = new URL(link.url);
+    const tail = u.pathname.split('/').filter(Boolean).pop() || '';
+    return tail
+      ? u.hostname.replace(/^www\./, '') + ' / ' + decodeURIComponent(tail).replace(/-[0-9a-f]{20,}$/i, '')
+      : u.hostname.replace(/^www\./, '');
+  } catch { return link.url; }
+}
+
+function styleBadge(badge, info) {
+  badge.textContent = info.label;
+  badge.style.background = info.color + '1A';
+  badge.style.color = info.color;
+  badge.style.borderColor = info.color + '33';
 }
 
 // ---------- Save status ----------
@@ -295,9 +337,18 @@ function renderCalendar() {
       const more = document.createElement('div');
       more.className = 'event-chip-more';
       more.textContent = `+ ${evts.length - maxShow}개 더`;
+      more.style.cursor = 'pointer';
+      more.addEventListener('click', (ev) => { ev.stopPropagation(); openDayEventsModal(date); });
       chips.appendChild(more);
     }
     cell.appendChild(chips);
+
+    const hint = document.createElement('span');
+    hint.className = 'day-add-hint';
+    hint.textContent = '+';
+    hint.setAttribute('aria-hidden', 'true');
+    cell.appendChild(hint);
+
     cell.addEventListener('click', () => openEventModal(null, fmtDate(date)));
     grid.appendChild(cell);
   });
@@ -307,7 +358,9 @@ function renderCalendar() {
 function renderMemo() {
   const key = fmtMonth(state.current);
   $('#memo-title').textContent = `${state.current.getFullYear()}년 ${state.current.getMonth() + 1}월 메모`;
-  $('#memo-textarea').value = state.memos[key] || '';
+  const el = $('#memo-textarea');
+  el.value = state.memos[key] || '';
+  autoResizeTextarea(el);
 }
 
 function renderEventList() {
@@ -380,6 +433,116 @@ function closeAllModals() {
 
 let editingEventId = null;
 
+// ---------- Event links editor ----------
+function buildLinkRow(link) {
+  const row = document.createElement('div');
+  row.className = 'link-row';
+
+  const top = document.createElement('div');
+  top.className = 'link-row-top';
+
+  const badge = document.createElement('span');
+  badge.className = 'link-type-badge';
+
+  const urlInput = document.createElement('input');
+  urlInput.type = 'url';
+  urlInput.className = 'link-url';
+  urlInput.placeholder = 'https://...';
+  urlInput.value = link.url || '';
+
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.className = 'icon-btn';
+  openBtn.title = '새 탭에서 열기';
+  openBtn.textContent = '↗';
+  openBtn.addEventListener('click', () => {
+    const u = urlInput.value.trim();
+    if (u) window.open(u, '_blank', 'noopener,noreferrer');
+  });
+
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'icon-btn link-del';
+  delBtn.title = '삭제';
+  delBtn.textContent = '×';
+  delBtn.addEventListener('click', () => { row.remove(); });
+
+  top.appendChild(badge);
+  top.appendChild(urlInput);
+  top.appendChild(openBtn);
+  top.appendChild(delBtn);
+
+  const labelInput = document.createElement('input');
+  labelInput.type = 'text';
+  labelInput.className = 'link-label-input';
+  labelInput.placeholder = '제목 (선택 · 예: 릴리즈 노트)';
+  labelInput.value = link.label || '';
+
+  row.appendChild(top);
+  row.appendChild(labelInput);
+
+  const refresh = () => styleBadge(badge, detectLinkInfo(urlInput.value.trim()));
+  urlInput.addEventListener('input', refresh);
+  refresh();
+
+  return row;
+}
+
+function buildLinkCardReadonly(link) {
+  const a = document.createElement('a');
+  a.className = 'link-card';
+  a.href = link.url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+
+  const badge = document.createElement('span');
+  badge.className = 'link-type-badge';
+  styleBadge(badge, detectLinkInfo(link.url));
+
+  const title = document.createElement('span');
+  title.className = 'link-card-title';
+  title.textContent = defaultLinkTitle(link);
+
+  const arrow = document.createElement('span');
+  arrow.className = 'link-card-arrow';
+  arrow.textContent = '↗';
+
+  a.appendChild(badge);
+  a.appendChild(title);
+  a.appendChild(arrow);
+  return a;
+}
+
+function renderLinksEditor(links) {
+  const container = $('#event-links-editor');
+  container.innerHTML = '';
+  const items = links || [];
+  if (!IS_LOCAL) {
+    if (items.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'links-empty';
+      empty.textContent = '참고 링크 없음';
+      container.appendChild(empty);
+    } else {
+      items.forEach(l => container.appendChild(buildLinkCardReadonly(l)));
+    }
+  } else {
+    items.forEach(l => container.appendChild(buildLinkRow(l)));
+  }
+}
+
+function collectLinks() {
+  const rows = $$('#event-links-editor .link-row');
+  const out = [];
+  rows.forEach(r => {
+    const url = r.querySelector('.link-url').value.trim();
+    if (!url) return;
+    const label = r.querySelector('.link-label-input').value.trim();
+    out.push(label ? { url, label } : { url });
+  });
+  return out;
+}
+
 function openEventModal(event, defaultDate) {
   closeAllModals();
   editingEventId = event?.id || null;
@@ -407,6 +570,8 @@ function openEventModal(event, defaultDate) {
   ['#event-title', '#event-start', '#event-end', '#event-category', '#event-note'].forEach(s => {
     $(s).disabled = !IS_LOCAL;
   });
+  renderLinksEditor(event?.links || []);
+  $('#event-link-add').hidden = !IS_LOCAL;
   $('#event-delete').hidden = !isEdit || !IS_LOCAL;
   $('#event-save').hidden = !IS_LOCAL;
 
@@ -419,12 +584,70 @@ function closeEventModal() {
   editingEventId = null;
 }
 
+// ---------- Day events modal (+ N개 더 클릭 시) ----------
+function openDayEventsModal(date) {
+  closeAllModals();
+  const evts = eventsOnDay(date);
+  const m = date.getMonth() + 1;
+  const d = date.getDate();
+  $('#day-events-title').textContent = `${m}월 ${d}일 · 일정 ${evts.length}건`;
+
+  const list = $('#day-events-list');
+  list.innerHTML = '';
+  if (evts.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'event-list-empty';
+    empty.textContent = '이날 일정이 없습니다.';
+    list.appendChild(empty);
+  } else {
+    evts.forEach(e => {
+      const row = document.createElement('div');
+      row.className = 'day-event-row';
+
+      const dot = document.createElement('div');
+      dot.className = 'day-event-row-dot';
+      dot.style.background = findCategory(e.category).color;
+
+      const title = document.createElement('div');
+      title.className = 'day-event-row-title';
+      title.textContent = e.title;
+
+      row.appendChild(dot);
+      row.appendChild(title);
+
+      const linkCount = (e.links || []).length;
+      if (linkCount) {
+        const meta = document.createElement('div');
+        meta.className = 'day-event-row-meta';
+        meta.textContent = `🔗 ${linkCount}`;
+        row.appendChild(meta);
+      }
+
+      row.addEventListener('click', () => {
+        $('#day-events-modal').hidden = true;
+        openEventModal(e);
+      });
+      list.appendChild(row);
+    });
+  }
+
+  const addBtn = $('#day-events-add');
+  addBtn.hidden = !IS_LOCAL;
+  addBtn.onclick = () => {
+    $('#day-events-modal').hidden = true;
+    openEventModal(null, fmtDate(date));
+  };
+
+  $('#day-events-modal').hidden = false;
+}
+
 async function handleSaveEvent() {
   const title = $('#event-title').value.trim();
   const start = $('#event-start').value;
   const end = $('#event-end').value || '';
   const category = $('#event-category').value;
   const note = $('#event-note').value.trim();
+  const links = collectLinks();
 
   if (!title) { showToast('제목을 입력하세요'); return; }
   if (!start) { showToast('시작일을 입력하세요'); return; }
@@ -432,9 +655,9 @@ async function handleSaveEvent() {
 
   if (editingEventId) {
     const idx = state.events.findIndex(e => e.id === editingEventId);
-    if (idx >= 0) state.events[idx] = { id: editingEventId, title, start, end, category, note };
+    if (idx >= 0) state.events[idx] = { id: editingEventId, title, start, end, category, note, links };
   } else {
-    state.events.push({ id: newId(), title, start, end, category, note });
+    state.events.push({ id: newId(), title, start, end, category, note, links });
   }
   closeEventModal();
   renderAll();
@@ -525,6 +748,7 @@ let memoTimer = null;
 function onMemoInput(e) {
   const key = fmtMonth(state.current);
   state.memos[key] = e.target.value;
+  autoResizeTextarea(e.target);
   setSaveStatus('saving', '입력 중…');
   clearTimeout(memoTimer);
   memoTimer = setTimeout(() => { saveMemosFile(); }, MEMO_DEBOUNCE_MS);
@@ -549,7 +773,15 @@ function bind() {
   $('#event-cancel').addEventListener('click', closeEventModal);
   $('#event-save').addEventListener('click', handleSaveEvent);
   $('#event-delete').addEventListener('click', handleDeleteEvent);
+  $('#event-link-add').addEventListener('click', () => {
+    $('#event-links-editor').appendChild(buildLinkRow({}));
+    const rows = $$('#event-links-editor .link-row');
+    rows[rows.length - 1]?.querySelector('.link-url')?.focus();
+  });
   $('#event-modal').addEventListener('click', (e) => { if (e.target.id === 'event-modal') closeEventModal(); });
+
+  $('#day-events-close').addEventListener('click', () => { $('#day-events-modal').hidden = true; });
+  $('#day-events-modal').addEventListener('click', (e) => { if (e.target.id === 'day-events-modal') $('#day-events-modal').hidden = true; });
 
   $('#memo-textarea').addEventListener('input', onMemoInput);
   $('#memo-textarea').addEventListener('blur', () => {
