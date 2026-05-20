@@ -16,11 +16,12 @@
     },
     {
       "id": "e_k7iu0tkm",
-      "title": "채점모델선택클로징",
+      "title": "채점모델선택클로징 배포",
       "start": "2026-06-01",
       "end": "",
       "category": "clipo",
-      "note": "1. 채점 실행 시 선택 옵션 제거\n2. 피드백 프롬프트 수정\n\n릴리즈 노트\nhttps://www.notion.so/datadriven/v2-21-X-35917e5c8cf18026938af622bd09955c?source=copy_link"
+      "note": "1. 채점 실행 시 선택 옵션 제거\n2. 피드백 프롬프트 수정\n\n릴리즈 노트\nhttps://www.notion.so/datadriven/v2-21-X-35917e5c8cf18026938af622bd09955c?source=copy_link",
+      "links": []
     },
     {
       "id": "e_1jtts8cb",
