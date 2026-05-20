@@ -13,7 +13,15 @@ const DATA_FILES = {
 };
 const MEMO_DEBOUNCE_MS = 1500;
 
-const IS_LOCAL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+// 편집 가능 호스트: localhost + LAN 사설망(RFC1918).
+// server.js가 0.0.0.0에 바인딩되므로 같은 LAN의 어떤 PC에서든 IP로 접속하면 편집 가능.
+const IS_LOCAL = (
+  location.hostname === 'localhost' ||
+  location.hostname === '127.0.0.1' ||
+  /^192\.168\.\d+\.\d+$/.test(location.hostname) ||
+  /^10\.\d+\.\d+\.\d+$/.test(location.hostname) ||
+  /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(location.hostname)
+);
 
 const GITEA_BASE = 'https://gitea.ddapp.io';
 const GITEA_REPO = 'Internal-Tool/team-schedule';
@@ -809,7 +817,7 @@ function applyReadOnlyMode() {
   $('#save-status').hidden = true;
   const memo = $('#memo-textarea');
   memo.readOnly = true;
-  memo.placeholder = '편집은 작업 PC(localhost:5184)에서만 가능합니다.';
+  memo.placeholder = '편집은 사무실 내부망(LAN URL)으로 접속해야 가능합니다.';
   document.body.classList.add('readonly');
 }
 
