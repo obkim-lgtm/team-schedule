@@ -163,6 +163,19 @@
           "url": "https://www.notion.so/datadriven/2026-36417e5c8cf180fd8293f8eca89264e7?source=copy_link"
         }
       ]
+    },
+    {
+      "id": "e_l0oyfypf",
+      "title": "에듀테크페어부스(증평)",
+      "start": "2026-07-10",
+      "end": "2026-07-11",
+      "category": "cat_hiai_배포_k8v2",
+      "note": "",
+      "links": [
+        {
+          "url": "https://datadriven-talk.slack.com/archives/C067JNL378Q/p1778474085296999"
+        }
+      ]
     }
   ]
 }
