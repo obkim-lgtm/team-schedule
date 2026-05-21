@@ -77,6 +77,20 @@
       "category": "cat_디자인_p040",
       "note": "",
       "links": []
+    },
+    {
+      "id": "e_w51on2q6",
+      "title": "초등 창체 기획 픽스",
+      "start": "2026-05-22",
+      "end": "",
+      "category": "clipo",
+      "note": "",
+      "links": [
+        {
+          "url": "https://www.notion.so/datadriven/C-2606-01-35d17e5c8cf1804bbf8ddc228d8e8629?source=copy_link",
+          "label": "PRD"
+        }
+      ]
     }
   ]
 }
