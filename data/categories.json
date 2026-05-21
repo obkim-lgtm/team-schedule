@@ -1,13 +1,13 @@
 {
   "categories": [
     {
-      "key": "hiai",
-      "name": "HIAI",
+      "key": "cat_hiai_배포_k8v2",
+      "name": "HIAI 배포",
       "color": "#7E44FB"
     },
     {
-      "key": "clipo",
-      "name": "CLIPO",
+      "key": "cat_clipo_배포_0boc",
+      "name": "CLIPO 배포",
       "color": "#416BFF"
     },
     {
