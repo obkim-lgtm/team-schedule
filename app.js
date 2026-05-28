@@ -1,8 +1,8 @@
 // =====================================================================
 // 팀 일정 (team-schedule)
-// 저장 경로 두 가지:
-//   1) localhost(server.js): PUT /api/save/<file> → 즉시 git push
-//   2) 그 외(배포 사이트): Gitea workflow_dispatch → 약 20~40초 후 반영
+// 저장·로딩 모두 GitHub Contents API. (public repo, 브라우저 CORS 허용)
+//   - 읽기: API raw로 항상 최신 (인증 없이도 됨, public repo)
+//   - 쓰기: PAT 1회 입력 → localStorage. 누구든 PAT 있으면 편집
 // 노션 연동 없음. 모든 일정은 수동 등록.
 // =====================================================================
 
@@ -13,27 +13,22 @@ const DATA_FILES = {
 };
 const MEMO_DEBOUNCE_MS = 1500;
 
-// 편집 가능 호스트: localhost + LAN 사설망(RFC1918).
-// server.js가 0.0.0.0에 바인딩되므로 같은 LAN의 어떤 PC에서든 IP로 접속하면 편집 가능.
-const IS_LOCAL = (
-  location.hostname === 'localhost' ||
-  location.hostname === '127.0.0.1' ||
-  /^192\.168\.\d+\.\d+$/.test(location.hostname) ||
-  /^10\.\d+\.\d+\.\d+$/.test(location.hostname) ||
-  /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(location.hostname)
-);
+// GitHub
+const GH_OWNER = 'obkim-lgtm';
+const GH_REPO = 'team-schedule';
+const GH_BRANCH = 'main';
+const GH_API = 'https://api.github.com';
+const PAT_KEY = 'team_schedule_github_pat';
 
-const GITEA_BASE = 'https://gitea.ddapp.io';
-const GITEA_REPO = 'Internal-Tool/team-schedule';
-const GITEA_WORKFLOW = 'save-data.yml';
-const GITEA_REF = 'pages';
-const PAT_KEY = 'team_schedule_gitea_pat';
+// GitHub API는 어디서든(브라우저) 호출 가능 → 항상 편집 가능. 첫 저장 시 PAT 1회 입력.
+const EDITABLE = true;
 
 const state = {
   current: new Date(),
   categories: [],
   events: [],
   memos: {},
+  fileSha: {},   // path → 마지막으로 본 GitHub blob sha (충돌 방지용)
 };
 
 const DEFAULT_CATEGORIES = [
@@ -167,100 +162,114 @@ async function ensurePAT() {
   return token;
 }
 
-// ---------- Save (env-aware) ----------
+// ---------- Save (GitHub Contents API) ----------
 let saveTimers = {};
-let dispatchQueue = Promise.resolve();
-
-async function saveViaLocalhost(filename, payload) {
-  const res = await fetch('/api/save/' + filename, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + await res.text());
-}
+let saveQueue = Promise.resolve();
 
 function utf8ToBase64(str) { return btoa(unescape(encodeURIComponent(str))); }
 
-async function saveViaDispatch(filename, payload) {
-  const token = await ensurePAT();
-  if (!token) throw new Error('PAT 없음');
-  const body = {
-    ref: GITEA_REF,
-    inputs: {
-      filename: filename,
-      content_b64: utf8ToBase64(JSON.stringify(payload, null, 2)),
+async function ghGetSha(path, token) {
+  const headers = { 'Accept': 'application/vnd.github+json' };
+  if (token) headers['Authorization'] = 'token ' + token;
+  const res = await fetch(`${GH_API}/repos/${GH_OWNER}/${GH_REPO}/contents/${path}?ref=${GH_BRANCH}&t=${Date.now()}`, { headers });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('sha 조회 실패 HTTP ' + res.status);
+  const d = await res.json();
+  return d.sha;
+}
+
+async function ghPutFile(path, contentStr, message, token) {
+  let sha = state.fileSha[path];
+  if (sha === undefined) sha = await ghGetSha(path, token);
+
+  const body = { message, content: utf8ToBase64(contentStr), branch: GH_BRANCH };
+  if (sha) body.sha = sha;
+
+  const res = await fetch(`${GH_API}/repos/${GH_OWNER}/${GH_REPO}/contents/${path}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': 'token ' + token,
+      'Accept': 'application/vnd.github+json',
+      'Content-Type': 'application/json',
     },
-  };
-  const res = await fetch(
-    `${GITEA_BASE}/api/v1/repos/${GITEA_REPO}/actions/workflows/${GITEA_WORKFLOW}/dispatches`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'token ' + token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    }
-  );
+    body: JSON.stringify(body),
+  });
+
   if (res.status === 401 || res.status === 403) {
     localStorage.removeItem(PAT_KEY);
-    throw new Error('PAT 인증 실패 — 다시 입력해주세요');
+    throw new Error('AUTH_FAIL');
   }
-  if (!res.ok && res.status !== 204) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status}: ${text}`);
+  if (res.status === 409 || res.status === 422) {
+    // 다른 사람이 먼저 저장 → sha 갱신 후 1회 재시도
+    const fresh = await ghGetSha(path, token);
+    if (fresh !== sha) { state.fileSha[path] = fresh; return ghPutFile(path, contentStr, message, token); }
+    throw new Error('충돌(다시 시도): ' + res.status);
   }
+  if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + await res.text().catch(() => ''));
+
+  const result = await res.json();
+  state.fileSha[path] = result.content?.sha;
 }
 
 async function postSave(filename, payload) {
-  // dispatch는 직렬화 (PAT 모달 동시 호출 방지)
-  dispatchQueue = dispatchQueue.then(async () => {
+  const path = 'data/' + filename;
+  const contentStr = JSON.stringify(payload, null, 2) + '\n';
+  // 직렬화 (PAT 모달 동시 호출 방지 + sha 충돌 방지)
+  saveQueue = saveQueue.then(async () => {
     setSaveStatus('saving', '저장 중…');
     try {
-      if (IS_LOCAL) {
-        await saveViaLocalhost(filename, payload);
-        setSaveStatus('saved', '저장됨');
-      } else {
-        await saveViaDispatch(filename, payload);
-        setSaveStatus('saved', '저장됨 · 약 30초 후 반영');
-      }
+      const token = await ensurePAT();
+      if (!token) throw new Error('NO_PAT');
+      await ghPutFile(path, contentStr, `갱신: ${filename}`, token);
+      setSaveStatus('saved', '저장됨');
       clearTimeout(saveTimers._reset);
       saveTimers._reset = setTimeout(() => {
-        if ($('#save-status').classList.contains('saved')) {
-          setSaveStatus('idle', '대기');
-        }
-      }, IS_LOCAL ? 2500 : 6000);
+        if ($('#save-status').classList.contains('saved')) setSaveStatus('idle', '대기');
+      }, 2500);
     } catch (e) {
       console.error('[save fail]', e);
-      setSaveStatus('error', '저장 실패');
-      showToast(`저장 실패: ${e.message}`);
+      if (e.message === 'NO_PAT') { setSaveStatus('error', 'PAT 필요'); showToast('PAT를 입력해야 저장돼요'); }
+      else if (e.message === 'AUTH_FAIL') { setSaveStatus('error', 'PAT 오류'); showToast('토큰이 유효하지 않아요. 다시 입력해주세요'); }
+      else { setSaveStatus('error', '저장 실패'); showToast(`저장 실패: ${e.message}`); }
     }
   });
-  return dispatchQueue;
+  return saveQueue;
 }
 
 function saveEventsFile()     { return postSave('manual-events.json', { events: state.events }); }
 function saveCategoriesFile() { return postSave('categories.json',    { categories: state.categories }); }
 function saveMemosFile()      { return postSave('memos.json',         { memos: state.memos }); }
 
-// ---------- Data loading ----------
-async function loadJSON(path, fallback) {
+// ---------- Data loading (GitHub API, 항상 최신) ----------
+// API contents로 읽으면 커밋 직후에도 최신. sha도 함께 캐시해 저장 충돌 방지.
+// API 실패(rate limit 등) 시 Pages 정적 파일로 폴백.
+async function loadOne(path, fallback) {
+  const token = getPAT();
   try {
-    const res = await fetch(path + '?t=' + Date.now());
-    if (!res.ok) throw new Error(res.status);
-    return await res.json();
+    const headers = { 'Accept': 'application/vnd.github+json' };
+    if (token) headers['Authorization'] = 'token ' + token;
+    const res = await fetch(`${GH_API}/repos/${GH_OWNER}/${GH_REPO}/contents/${path}?ref=${GH_BRANCH}&t=${Date.now()}`, { headers });
+    if (res.status === 404) return fallback;
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    state.fileSha[path] = d.sha;
+    const json = decodeURIComponent(escape(atob(d.content)));
+    return JSON.parse(json);
   } catch (e) {
-    console.warn('[load fail]', path, e);
+    console.warn('[API load fail, fallback to static]', path, e);
+    try {
+      const res2 = await fetch(path + '?t=' + Date.now());
+      if (res2.ok) return await res2.json();
+    } catch (_) {}
     return fallback;
   }
 }
 
 async function loadAll() {
   const [cats, manual, memos] = await Promise.all([
-    loadJSON(DATA_FILES.categories,   { categories: DEFAULT_CATEGORIES }),
-    loadJSON(DATA_FILES.manualEvents, { events: [] }),
-    loadJSON(DATA_FILES.memos,        { memos: {} }),
+    loadOne(DATA_FILES.categories,   { categories: DEFAULT_CATEGORIES }),
+    loadOne(DATA_FILES.manualEvents, { events: [] }),
+    loadOne(DATA_FILES.memos,        { memos: {} }),
   ]);
   state.categories = cats.categories || DEFAULT_CATEGORIES;
   state.events = manual.events || [];
@@ -525,7 +534,7 @@ function renderLinksEditor(links) {
   const container = $('#event-links-editor');
   container.innerHTML = '';
   const items = links || [];
-  if (!IS_LOCAL) {
+  if (!EDITABLE) {
     if (items.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'links-empty';
@@ -557,9 +566,9 @@ function openEventModal(event, defaultDate) {
   const isEdit = !!event;
 
   // 배포(보기 전용): 빈 날짜 클릭은 무시. 칩 클릭만 모달 표시
-  if (!IS_LOCAL && !isEdit) return;
+  if (!EDITABLE && !isEdit) return;
 
-  $('#event-modal-title').textContent = !IS_LOCAL ? '일정 보기' : (isEdit ? '일정 수정' : '일정 추가');
+  $('#event-modal-title').textContent = !EDITABLE ? '일정 보기' : (isEdit ? '일정 수정' : '일정 추가');
   $('#event-title').value = event?.title || '';
   $('#event-start').value = event?.start || defaultDate || todayISO();
   $('#event-end').value = event?.end || '';
@@ -576,15 +585,15 @@ function openEventModal(event, defaultDate) {
   sel.value = event?.category || state.categories[0]?.key || '';
 
   ['#event-title', '#event-start', '#event-end', '#event-category', '#event-note'].forEach(s => {
-    $(s).disabled = !IS_LOCAL;
+    $(s).disabled = !EDITABLE;
   });
   renderLinksEditor(event?.links || []);
-  $('#event-link-add').hidden = !IS_LOCAL;
-  $('#event-delete').hidden = !isEdit || !IS_LOCAL;
-  $('#event-save').hidden = !IS_LOCAL;
+  $('#event-link-add').hidden = !EDITABLE;
+  $('#event-delete').hidden = !isEdit || !EDITABLE;
+  $('#event-save').hidden = !EDITABLE;
 
   $('#event-modal').hidden = false;
-  if (IS_LOCAL) setTimeout(() => $('#event-title').focus(), 50);
+  if (EDITABLE) setTimeout(() => $('#event-title').focus(), 50);
 }
 
 function closeEventModal() {
@@ -640,7 +649,7 @@ function openDayEventsModal(date) {
   }
 
   const addBtn = $('#day-events-add');
-  addBtn.hidden = !IS_LOCAL;
+  addBtn.hidden = !EDITABLE;
   addBtn.onclick = () => {
     $('#day-events-modal').hidden = true;
     openEventModal(null, fmtDate(date));
@@ -825,8 +834,17 @@ async function init() {
   bind();
   await loadAll();
   renderAll();
-  if (!IS_LOCAL) applyReadOnlyMode();
-  else setSaveStatus('idle', '대기');
+  if (!EDITABLE) { applyReadOnlyMode(); return; }
+
+  setSaveStatus('idle', getPAT() ? '대기' : 'PAT 미설정');
+
+  // 상태 칩 클릭 → PAT 재입력 (오류났거나 미설정일 때)
+  $('#save-status').addEventListener('click', async () => {
+    if ($('#save-status').classList.contains('error') || !getPAT()) {
+      await promptForPAT();
+      setSaveStatus('idle', getPAT() ? '대기' : 'PAT 미설정');
+    }
+  });
 }
 
 init();
