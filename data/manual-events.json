@@ -113,7 +113,7 @@
       "title": "팜플렛 수령완료",
       "start": "2026-06-18",
       "end": "",
-      "category": "cat_디자인_p040",
+      "category": "ops",
       "note": "",
       "links": []
     },
@@ -217,7 +217,7 @@
     },
     {
       "id": "e_k317exro",
-      "title": "팜플레시 디자인완료",
+      "title": "팜플렛 디자인완료",
       "start": "2026-06-05",
       "end": "",
       "category": "cat_디자인_p040",
@@ -244,10 +244,37 @@
     },
     {
       "id": "e_g1paoaoy",
-      "title": "간편세특 기획 픽스",
+      "title": "간편세특 디자인 픽스",
       "start": "2026-05-29",
       "end": "",
       "category": "cat_기획_eyva",
+      "note": "",
+      "links": []
+    },
+    {
+      "id": "e_u0e21toe",
+      "title": "간편세특QA",
+      "start": "2026-06-18",
+      "end": "2026-06-19",
+      "category": "cat_qa_d48v",
+      "note": "",
+      "links": []
+    },
+    {
+      "id": "e_rh2h2hje",
+      "title": "초등 QA",
+      "start": "2026-06-22",
+      "end": "2026-06-24",
+      "category": "cat_qa_d48v",
+      "note": "",
+      "links": []
+    },
+    {
+      "id": "e_d377ruz9",
+      "title": "창체 QA",
+      "start": "2026-06-01",
+      "end": "2026-06-02",
+      "category": "cat_qa_d48v",
       "note": "",
       "links": []
     }
