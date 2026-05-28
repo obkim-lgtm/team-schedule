@@ -75,6 +75,17 @@ function findCategory(key) {
       || { key: 'default', name: '기타', color: '#9CA3AF' };
 }
 
+// 배경색 밝기(YIQ)로 글자색 자동 결정 — 밝으면 검정, 어두우면 흰색
+function textColorOn(hex) {
+  const c = (hex || '').replace('#', '');
+  if (c.length < 6) return '#1A1D23';
+  const r = parseInt(c.slice(0, 2), 16);
+  const g = parseInt(c.slice(2, 4), 16);
+  const b = parseInt(c.slice(4, 6), 16);
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 150 ? '#1A1D23' : '#FFFFFF';
+}
+
 // ---------- Link helpers ----------
 function detectLinkInfo(url) {
   if (!url) return { type: 'other', label: '링크', color: '#6B7280' };
@@ -406,6 +417,7 @@ function renderCalendar() {
       if (e.start < weekStartISO) bar.classList.add('cut-left');
       if (enISO > weekEndISO) bar.classList.add('cut-right');
       bar.style.background = cat.color;
+      bar.style.color = textColorOn(cat.color);
       bar.style.left = `calc(${startCol} / 7 * 100% + 3px)`;
       bar.style.width = `calc(${endCol - startCol + 1} / 7 * 100% - 6px)`;
       bar.style.top = (lane * CAL_LANE_H) + 'px';
