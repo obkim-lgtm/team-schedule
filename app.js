@@ -294,7 +294,11 @@ function eventsInMonth(year, month) {
   }).sort((a, b) => a.start.localeCompare(b.start));
 }
 
-// ---------- Calendar ----------
+// ---------- Calendar (주 단위 + 멀티데이 spanning 막대) ----------
+const MS_DAY = 86400000;
+const CAL_MAX_LANES = 3;   // 한 주에서 보여줄 막대 줄 수
+const CAL_LANE_H = 21;     // 막대 한 줄 높이(px)
+
 function renderCalendar() {
   const grid = $('#calendar-grid');
   grid.innerHTML = '';
@@ -315,60 +319,119 @@ function renderCalendar() {
   for (let d = 1; d <= trailing; d++) cells.push({ year, month: month + 1, day: d, otherMonth: true });
   while (cells.length < 42) {
     const last = cells[cells.length - 1];
-    const nextDate = new Date(last.year, last.month, last.day + 1);
-    cells.push({ year: nextDate.getFullYear(), month: nextDate.getMonth(), day: nextDate.getDate(), otherMonth: true });
+    const nd = new Date(last.year, last.month, last.day + 1);
+    cells.push({ year: nd.getFullYear(), month: nd.getMonth(), day: nd.getDate(), otherMonth: true });
   }
 
   const today = new Date();
-  cells.forEach((c) => {
-    const date = new Date(c.year, c.month, c.day);
-    const dow = date.getDay();
-    const cell = document.createElement('div');
-    cell.className = 'day-cell';
-    if (c.otherMonth) cell.classList.add('other-month');
-    if (dow === 0) cell.classList.add('sun');
-    if (dow === 6) cell.classList.add('sat');
-    if (sameDay(date, today)) cell.classList.add('today');
-    cell.dataset.date = fmtDate(date);
 
-    const num = document.createElement('span');
-    num.className = 'day-num';
-    num.textContent = c.day;
-    cell.appendChild(num);
+  for (let w = 0; w < 6; w++) {
+    const weekCellMeta = cells.slice(w * 7, w * 7 + 7);
+    const weekDates = weekCellMeta.map(c => new Date(c.year, c.month, c.day));
+    const weekStart = weekDates[0];
+    const weekEnd = weekDates[6];
+    const weekStartISO = fmtDate(weekStart);
+    const weekEndISO = fmtDate(weekEnd);
 
-    const evts = eventsOnDay(date);
-    const chips = document.createElement('div');
-    chips.className = 'event-chips';
-    const maxShow = 3;
-    evts.slice(0, maxShow).forEach(e => {
-      const chip = document.createElement('div');
-      chip.className = 'event-chip';
-      const cat = findCategory(e.category);
-      chip.style.background = cat.color + '22';
-      chip.style.borderLeftColor = cat.color;
-      chip.textContent = e.title;
-      chip.addEventListener('click', (ev) => { ev.stopPropagation(); openEventModal(e); });
-      chips.appendChild(chip);
+    const weekEl = document.createElement('div');
+    weekEl.className = 'cal-week';
+
+    // (1) 날짜 셀 레이어
+    const cellsLayer = document.createElement('div');
+    cellsLayer.className = 'cal-week-cells';
+    weekCellMeta.forEach((c) => {
+      const date = new Date(c.year, c.month, c.day);
+      const dow = date.getDay();
+      const cell = document.createElement('div');
+      cell.className = 'day-cell';
+      if (c.otherMonth) cell.classList.add('other-month');
+      if (dow === 0) cell.classList.add('sun');
+      if (dow === 6) cell.classList.add('sat');
+      if (sameDay(date, today)) cell.classList.add('today');
+      cell.dataset.date = fmtDate(date);
+
+      const num = document.createElement('span');
+      num.className = 'day-num';
+      num.textContent = c.day;
+      cell.appendChild(num);
+
+      const hint = document.createElement('span');
+      hint.className = 'day-add-hint';
+      hint.textContent = '+';
+      hint.setAttribute('aria-hidden', 'true');
+      cell.appendChild(hint);
+
+      cell.addEventListener('click', () => openEventModal(null, fmtDate(date)));
+      cellsLayer.appendChild(cell);
     });
-    if (evts.length > maxShow) {
+    weekEl.appendChild(cellsLayer);
+
+    // (2) 이벤트 막대 레이어
+    const barsLayer = document.createElement('div');
+    barsLayer.className = 'cal-week-bars';
+
+    const weekEvents = state.events
+      .filter(e => { const en = e.end || e.start; return !(en < weekStartISO || e.start > weekEndISO); })
+      .sort((a, b) => {
+        if (a.start !== b.start) return a.start.localeCompare(b.start);
+        const ad = a.end || a.start, bd = b.end || b.start;
+        return bd.localeCompare(ad); // 같은 시작일이면 긴 일정 먼저
+      });
+
+    const lanes = [];                 // lanes[i] = [{startCol,endCol}]
+    const hidden = new Array(7).fill(0);
+
+    weekEvents.forEach(e => {
+      const enISO = e.end || e.start;
+      const segStartDate = e.start < weekStartISO ? weekStart : parseDate(e.start);
+      const segEndDate = enISO > weekEndISO ? weekEnd : parseDate(enISO);
+      const startCol = Math.round((segStartDate - weekStart) / MS_DAY);
+      const endCol = Math.round((segEndDate - weekStart) / MS_DAY);
+
+      let lane = -1;
+      for (let li = 0; li < lanes.length; li++) {
+        if (!lanes[li].some(s => !(endCol < s.startCol || startCol > s.endCol))) { lane = li; break; }
+      }
+      if (lane === -1) { lanes.push([]); lane = lanes.length - 1; }
+      lanes[lane].push({ startCol, endCol });
+
+      if (lane >= CAL_MAX_LANES) {
+        for (let col = startCol; col <= endCol; col++) hidden[col]++;
+        return;
+      }
+
+      const cat = findCategory(e.category);
+      const bar = document.createElement('div');
+      bar.className = 'cal-bar';
+      if (e.start < weekStartISO) bar.classList.add('cut-left');
+      if (enISO > weekEndISO) bar.classList.add('cut-right');
+      bar.style.background = cat.color;
+      bar.style.left = `calc(${startCol} / 7 * 100% + 3px)`;
+      bar.style.width = `calc(${endCol - startCol + 1} / 7 * 100% - 6px)`;
+      bar.style.top = (lane * CAL_LANE_H) + 'px';
+      bar.textContent = (e.start < weekStartISO ? '◂ ' : '') + e.title;
+      bar.title = e.title;
+      bar.addEventListener('click', (ev) => { ev.stopPropagation(); openEventModal(e); });
+      barsLayer.appendChild(bar);
+    });
+
+    // (3) 넘친 일정 "+N"
+    hidden.forEach((n, col) => {
+      if (n <= 0) return;
       const more = document.createElement('div');
-      more.className = 'event-chip-more';
-      more.textContent = `+ ${evts.length - maxShow}개 더`;
-      more.style.cursor = 'pointer';
+      more.className = 'cal-bar-more';
+      more.style.left = `calc(${col} / 7 * 100% + 3px)`;
+      more.style.width = `calc(1 / 7 * 100% - 6px)`;
+      more.style.top = (CAL_MAX_LANES * CAL_LANE_H) + 'px';
+      more.textContent = `+${n}`;
+      const date = weekDates[col];
       more.addEventListener('click', (ev) => { ev.stopPropagation(); openDayEventsModal(date); });
-      chips.appendChild(more);
-    }
-    cell.appendChild(chips);
+      barsLayer.appendChild(more);
+    });
 
-    const hint = document.createElement('span');
-    hint.className = 'day-add-hint';
-    hint.textContent = '+';
-    hint.setAttribute('aria-hidden', 'true');
-    cell.appendChild(hint);
-
-    cell.addEventListener('click', () => openEventModal(null, fmtDate(date)));
-    grid.appendChild(cell);
-  });
+    weekEl.appendChild(barsLayer);
+    grid.appendChild(weekEl);
+  }
 }
 
 // ---------- Side pane ----------
