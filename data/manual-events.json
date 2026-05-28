@@ -250,6 +250,15 @@
       "category": "cat_기획_eyva",
       "note": "",
       "links": []
+    },
+    {
+      "id": "e_u0e21toe",
+      "title": "간편세특QA",
+      "start": "2026-06-18",
+      "end": "2026-06-19",
+      "category": "cat_hiai_배포_k8v2",
+      "note": "",
+      "links": []
     }
   ]
 }
