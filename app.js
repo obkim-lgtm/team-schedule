@@ -309,6 +309,7 @@ function eventsInMonth(year, month) {
 const MS_DAY = 86400000;
 const CAL_MAX_LANES = 3;   // 한 주에서 보여줄 막대 줄 수
 const CAL_LANE_H = 21;     // 막대 한 줄 높이(px)
+let draggingId = null;     // 드래그 중인 일정 id
 
 function renderCalendar() {
   const grid = $('#calendar-grid');
@@ -373,6 +374,35 @@ function renderCalendar() {
       cell.appendChild(hint);
 
       cell.addEventListener('click', () => openEventModal(null, fmtDate(date)));
+
+      // 드롭 타겟 (일정 날짜 이동)
+      cell.addEventListener('dragover', (ev) => {
+        if (!draggingId) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = 'move';
+        cell.classList.add('drag-over');
+      });
+      cell.addEventListener('dragleave', () => cell.classList.remove('drag-over'));
+      cell.addEventListener('drop', (ev) => {
+        ev.preventDefault();
+        cell.classList.remove('drag-over');
+        const id = draggingId;
+        draggingId = null;
+        document.body.classList.remove('dragging');
+        if (!id) return;
+        const evt = state.events.find(x => x.id === id);
+        if (!evt) return;
+        const dropISO = cell.dataset.date;
+        if (dropISO === evt.start) return;
+        const offset = Math.round((parseDate(dropISO) - parseDate(evt.start)) / MS_DAY);
+        evt.start = dropISO;
+        if (evt.end) evt.end = fmtDate(new Date(parseDate(evt.end).getTime() + offset * MS_DAY));
+        renderCalendar();
+        renderEventList();
+        saveEventsFile();
+        showToast('날짜 이동됨');
+      });
+
       cellsLayer.appendChild(cell);
     });
     weekEl.appendChild(cellsLayer);
@@ -422,8 +452,22 @@ function renderCalendar() {
       bar.style.width = `calc(${endCol - startCol + 1} / 7 * 100% - 6px)`;
       bar.style.top = (lane * CAL_LANE_H) + 'px';
       bar.textContent = (e.start < weekStartISO ? '◂ ' : '') + e.title;
-      bar.title = e.title;
+      bar.title = e.title + ' (드래그해서 날짜 이동)';
       bar.addEventListener('click', (ev) => { ev.stopPropagation(); openEventModal(e); });
+
+      // 드래그로 날짜 이동
+      bar.draggable = true;
+      bar.addEventListener('dragstart', (ev) => {
+        draggingId = e.id;
+        document.body.classList.add('dragging');
+        ev.dataTransfer.effectAllowed = 'move';
+        try { ev.dataTransfer.setData('text/plain', e.id); } catch (_) {}
+      });
+      bar.addEventListener('dragend', () => {
+        draggingId = null;
+        document.body.classList.remove('dragging');
+        $$('.day-cell.drag-over').forEach(c => c.classList.remove('drag-over'));
+      });
       barsLayer.appendChild(bar);
     });
 
@@ -646,6 +690,7 @@ function openEventModal(event, defaultDate) {
   $('#event-modal-title').textContent = !EDITABLE ? '일정 보기' : (isEdit ? '일정 수정' : '일정 추가');
   $('#event-title').value = event?.title || '';
   $('#event-start').value = event?.start || defaultDate || todayISO();
+  $('#event-start').dataset.prev = $('#event-start').value;
   $('#event-end').value = event?.end || '';
   $('#event-note').value = event?.note || '';
 
@@ -865,6 +910,18 @@ function bind() {
   $('#event-cancel').addEventListener('click', closeEventModal);
   $('#event-save').addEventListener('click', handleSaveEvent);
   $('#event-delete').addEventListener('click', handleDeleteEvent);
+
+  // 시작일 바꾸면 종료일도 기간 유지하며 자동 이동
+  $('#event-start').addEventListener('change', (e) => {
+    const endEl = $('#event-end');
+    const prev = $('#event-start').dataset.prev;
+    const next = e.target.value;
+    if (endEl.value && prev && next && prev !== next) {
+      const offset = Math.round((parseDate(next) - parseDate(prev)) / MS_DAY);
+      if (offset !== 0) endEl.value = fmtDate(new Date(parseDate(endEl.value).getTime() + offset * MS_DAY));
+    }
+    $('#event-start').dataset.prev = next;
+  });
   $('#event-link-add').addEventListener('click', () => {
     $('#event-links-editor').appendChild(buildLinkRow({}));
     const rows = $$('#event-links-editor .link-row');
