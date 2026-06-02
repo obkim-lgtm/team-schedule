@@ -40,11 +40,16 @@
     {
       "id": "e_cllzowe4",
       "title": "창체 배포",
-      "start": "2026-06-04",
+      "start": "2026-06-09",
       "end": "",
       "category": "cat_clipo_배포_0boc",
-      "note": "릴리즈 노트 : https://www.notion.so/datadriven/v2-22-36417e5c8cf1809592decedef378e60a?source=copy_link",
-      "links": []
+      "note": "6/4 배포였으나, 6/2 QA결과 반영 시간 필요 => QA기간을 더 거쳐서 6/9 화요이 2시 배포로 조정",
+      "links": [
+        {
+          "url": "https://www.notion.so/datadriven/v2-22-36417e5c8cf1809592decedef378e60a?source=copy_link",
+          "label": "릴리즈노트"
+        }
+      ]
     },
     {
       "id": "e_7b4q3x8y",
