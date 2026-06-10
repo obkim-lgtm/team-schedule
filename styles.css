@@ -338,6 +338,8 @@ button {
 .cal-bar:active { cursor: grabbing; }
 .cal-bar.cut-left  { border-top-left-radius: 0;  border-bottom-left-radius: 0; }
 .cal-bar.cut-right { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.cal-bar.past { opacity: 0.38; }
+.cal-bar.past:hover { opacity: 0.75; }
 /* 드래그 중에는 막대가 드롭을 가로막지 않도록 */
 body.dragging .cal-bar { pointer-events: none; }
 .day-cell.drag-over { background: var(--accent-bg); box-shadow: inset 0 0 0 2px var(--accent); }

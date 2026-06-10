@@ -446,6 +446,7 @@ function renderCalendar() {
       bar.className = 'cal-bar';
       if (e.start < weekStartISO) bar.classList.add('cut-left');
       if (enISO > weekEndISO) bar.classList.add('cut-right');
+      if (enISO < todayISO()) bar.classList.add('past');  // 끝난 일정은 흐리게
       bar.style.background = cat.color;
       bar.style.color = textColorOn(cat.color);
       bar.style.left = `calc(${startCol} / 7 * 100% + 3px)`;
