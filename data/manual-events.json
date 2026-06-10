@@ -107,7 +107,7 @@
     {
       "id": "e_oz76k0b6",
       "title": "CLIPO OCR 기획 픽스",
-      "start": "2026-06-16",
+      "start": "2026-06-25",
       "end": "",
       "category": "cat_기획_eyva",
       "note": "",
@@ -286,10 +286,10 @@
     {
       "id": "e_yv5fxwoo",
       "title": "팜플렛 발주",
-      "start": "2026-06-08",
+      "start": "2026-06-10",
       "end": "",
       "category": "cat_디자인_p040",
-      "note": "",
+      "note": "*배송비 포함 1,067,000원 완료\n핀버튼 : 200개\n요금제 전단 : 500매\n브로슈어 : 710부",
       "links": []
     },
     {
@@ -359,6 +359,15 @@
       "id": "e_o36rhgdt",
       "title": "초등 연구회 내방",
       "start": "2026-06-11",
+      "end": "",
+      "category": "ops",
+      "note": "",
+      "links": []
+    },
+    {
+      "id": "e_qpgll3c4",
+      "title": "부스 설치",
+      "start": "2026-06-19",
       "end": "",
       "category": "ops",
       "note": "",
