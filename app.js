@@ -459,9 +459,10 @@ function renderCalendar() {
       bar.draggable = true;
       bar.addEventListener('dragstart', (ev) => {
         draggingId = e.id;
-        document.body.classList.add('dragging');
         ev.dataTransfer.effectAllowed = 'move';
         try { ev.dataTransfer.setData('text/plain', e.id); } catch (_) {}
+        // dragstart 중 동기 DOM/스타일 변경은 Chrome이 드래그를 취소시킴 → 한 프레임 뒤로
+        setTimeout(() => { if (draggingId) document.body.classList.add('dragging'); }, 0);
       });
       bar.addEventListener('dragend', () => {
         draggingId = null;
