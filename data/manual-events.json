@@ -417,6 +417,15 @@
       "category": "cat_hiai_배포_k8v2",
       "note": "",
       "links": []
+    },
+    {
+      "id": "e_lj5ux49x",
+      "title": "자체 연수",
+      "start": "2026-06-17",
+      "end": "",
+      "category": "ops",
+      "note": "국어 안용중 이대원 선생님",
+      "links": []
     }
   ]
 }
