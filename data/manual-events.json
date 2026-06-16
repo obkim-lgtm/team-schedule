@@ -141,19 +141,6 @@
       "links": []
     },
     {
-      "id": "e_dhkca4na",
-      "title": "AI활용교육컨퍼런스(벡스코)",
-      "start": "2026-08-06",
-      "end": "2026-08-07",
-      "category": "ops",
-      "note": "",
-      "links": [
-        {
-          "url": "https://www.notion.so/datadriven/2026-36417e5c8cf180fd8293f8eca89264e7?source=copy_link"
-        }
-      ]
-    },
-    {
       "id": "e_l0oyfypf",
       "title": "에듀테크페어부스(증평)",
       "start": "2026-07-10",
@@ -385,7 +372,7 @@
     {
       "id": "e_cybqwic9",
       "title": "간편세특 피그마",
-      "start": "2026-06-18",
+      "start": "2026-06-17",
       "end": "",
       "category": "cat_디자인_p040",
       "note": "",
