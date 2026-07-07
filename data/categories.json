@@ -29,6 +29,11 @@
       "key": "cat_qa_d48v",
       "name": "QA",
       "color": "#85D270"
+    },
+    {
+      "key": "cat_데이터_분석_e2ah",
+      "name": "데이터 분석",
+      "color": "#06B6D4"
     }
   ]
 }
