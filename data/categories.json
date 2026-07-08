@@ -34,6 +34,11 @@
       "key": "cat_데이터_분석_e2ah",
       "name": "데이터 분석",
       "color": "#06B6D4"
+    },
+    {
+      "key": "cat_연차_gtvz",
+      "name": "연차",
+      "color": "#B3B3B3"
     }
   ]
 }
